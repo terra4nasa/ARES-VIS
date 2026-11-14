@@ -7,6 +7,7 @@ import { haversineKm } from "./mars";
 import type { WalkReadout } from "./walk";
 import { DEFAULT_SITE, seedRouteAt, codeFromName, locationName, regionName, wrapLon } from "./sites";
 import { missionReply, type CommsMessage } from "./comms";
+import { HAZARDS, bestBaseFor, hazardAlertText, type HazardDef, type HazardId } from "./hazards";
 
 export interface SiteState {
   name: string;
@@ -20,8 +21,29 @@ export interface SiteState {
 
 export type CommsStatus = "ONLINE" | "DEGRADED" | "ACQUIRING";
 
+/** mission-control critical warning popup (vis: Alerts.tsx stack) */
+export interface CommsAlert {
+  id: number;
+  /** dedupe key — same key won't re-pop within the cooldown window */
+  key: string;
+  title: string;
+  text: string;
+  kind: "warn" | "alert";
+  t: number;
+}
+
+/** active hazard drill */
+export interface HazardState {
+  id: HazardId;
+  def: HazardDef;
+  startedT: number;
+  /** recommended shelter for this drill */
+  base: { name: string; lon: number; lat: number; distM: number; bearing: number; etaMin: number; why: string };
+}
+
 export interface CommsState {
   messages: CommsMessage[];
+  alerts: CommsAlert[];
   signal: number; // 0–100 %
   status: CommsStatus;
   relay: string;
@@ -57,7 +79,9 @@ export interface EvaParams {
 /** per-block visor HUD preferences — persisted with the mission */
 export interface VisorPrefs {
   nav: boolean; // next-waypoint tape: distance / bearing / ETA
-  eva: boolean; // O₂ · dose · mission clock · bio
+  eva: boolean; // O₂ · dose · mission clock
+  bio: boolean; // biometrics: heart · core temp · suit pressure · work rate
+  rad: boolean; // radiation: live dose rate · cumulative · space-wx state
   terrain: boolean; // elevation · slope · sun · environment
   comms: boolean; // earth light-time · space weather
   hazards: boolean; // steep-terrain / low-O₂ alerts
@@ -70,9 +94,9 @@ export interface VisorPrefs {
 }
 
 export const VISOR_PRESET: Record<"minimal" | "standard" | "full", VisorPrefs> = {
-  minimal: { nav: true, eva: true, terrain: false, comms: false, hazards: true, profile: false, helmet: false, reticle: true, compass: true, minimap: false, shadows: false },
-  standard: { nav: true, eva: true, terrain: true, comms: true, hazards: true, profile: false, helmet: true, reticle: true, compass: true, minimap: true, shadows: true },
-  full: { nav: true, eva: true, terrain: true, comms: true, hazards: true, profile: true, helmet: true, reticle: true, compass: true, minimap: true, shadows: true },
+  minimal: { nav: true, eva: true, bio: false, rad: false, terrain: false, comms: false, hazards: true, profile: false, helmet: false, reticle: true, compass: true, minimap: false, shadows: false },
+  standard: { nav: true, eva: true, bio: true, rad: false, terrain: true, comms: true, hazards: true, profile: false, helmet: true, reticle: true, compass: true, minimap: true, shadows: true },
+  full: { nav: true, eva: true, bio: true, rad: true, terrain: true, comms: true, hazards: true, profile: true, helmet: true, reticle: true, compass: true, minimap: true, shadows: true },
 };
 
 export const DEFAULT_VISOR_PREFS: VisorPrefs = { ...VISOR_PRESET.standard };
@@ -104,7 +128,6 @@ interface AppStore {
   route: RouteWaypoint[];
   planMode: boolean;
   visorMode: boolean;
-  splitMode: boolean;
   bootDone: boolean;
   activePanel: PanelId | null;
   eva: EvaParams;
@@ -118,6 +141,8 @@ interface AppStore {
   site: SiteState;
   siteNonce: number; // bump → 3D scene rebuilds at the new site
   comms: CommsState;
+  hazard: HazardState | null; // active hazard drill (null = nominal ops)
+  hazardAdviceNonce: number; // bump → WalkEngine emits a periodic advice blip
   /* actions */
   toggleLayer: (id: string) => void;
   setLayerOpacity: (id: string, v: number) => void;
@@ -125,7 +150,6 @@ interface AppStore {
   removeCustomLayer: (id: string) => void;
   setPlanMode: (v: boolean) => void;
   setVisorMode: (v: boolean) => void;
-  setSplitMode: (v: boolean) => void;
   setBootDone: (v: boolean) => void;
   openPanel: (p: PanelId | null) => void;
   setEva: (p: Partial<EvaParams>) => void;
@@ -158,6 +182,13 @@ interface AppStore {
   sendComms: (text: string) => void;
   tickComms: (latencyMin?: number) => void;
   setCommsOpen: (v: boolean) => void;
+  /** mission-control warning popup — deduped by key, mirrored into the comms log */
+  pushAlert: (key: string, title: string, text: string, kind?: "warn" | "alert") => void;
+  dismissAlert: (id: number) => void;
+  /** start a simulated hazard drill — comms recommend the best shelter base */
+  triggerHazard: (id: HazardId) => void;
+  clearHazard: () => void;
+  bumpHazardAdvice: () => void;
 }
 
 function initialLayers(): LayerState[] {
@@ -193,6 +224,7 @@ interface Persisted {
 const DEFAULT_EVA: EvaParams = { crew: 2, speedKmh: 2.6, suitHours: 8, startLst: 9 };
 const DEFAULT_COMMS: CommsState = {
   messages: [],
+  alerts: [],
   signal: 88,
   status: "ONLINE",
   relay: "MRO / Electra",
@@ -244,14 +276,16 @@ export const useStore = create<AppStore>((set, get) => {
 
   let eventId = 1;
   let commsId = 1;
+  let alertId = 1;
   let tickCount = 0;
+  /** last alert emit per dedupe key (cooldown 45 s) */
+  const alertCooldown: Record<string, number> = {};
 
   return {
     layers: [...initialLayers(), ...p.customLayers.map((def) => ({ def, visible: true, opacity: 0.8 }))],
     route: p.route,
     planMode: false,
     visorMode: false,
-    splitMode: false,
     bootDone: p.bootDone,
     activePanel: null,
     eva: p.eva,
@@ -264,6 +298,8 @@ export const useStore = create<AppStore>((set, get) => {
     site: p.site,
     siteNonce: 0,
     comms: { ...DEFAULT_COMMS },
+    hazard: null,
+    hazardAdviceNonce: 0,
 
     toggleLayer: (id) =>
       set((s) => ({
@@ -275,8 +311,7 @@ export const useStore = create<AppStore>((set, get) => {
       set((s) => ({ layers: [...s.layers, { def, visible: true, opacity: 0.8 }] })),
     removeCustomLayer: (id) => set((s) => ({ layers: s.layers.filter((l) => l.def.id !== id) })),
     setPlanMode: (v) => set({ planMode: v }),
-    setVisorMode: (v) => set({ visorMode: v, ...(v ? {} : { splitMode: false }), activePanel: v ? null : get().activePanel }),
-    setSplitMode: (v) => set({ splitMode: v, ...(v && !get().visorMode ? { visorMode: true } : {}) }),
+    setVisorMode: (v) => set({ visorMode: v, activePanel: v ? null : get().activePanel }),
     setBootDone: (v) => set({ bootDone: v }),
     openPanel: (panel) => set({ activePanel: panel }),
     setEva: (patch) => {
@@ -310,7 +345,7 @@ export const useStore = create<AppStore>((set, get) => {
     collectSample: (sm) => set((s) => ({ collected: [...s.collected, sm] })),
     cycleWalkSpeed: () =>
       set((s) => {
-        const steps = [1, 5, 20, 60, 240];
+        const steps = [1, 5, 20, 60];
         const idx = steps.indexOf(s.walk.speedMult);
         return { walk: { ...s.walk, speedMult: steps[(idx + 1) % steps.length] } };
       }),
@@ -509,7 +544,8 @@ export const useStore = create<AppStore>((set, get) => {
       const distKm = r && baseWp ? haversineKm(baseWp, { lon: r.lon, lat: r.lat }) : 0;
       const base = 92 - Math.min(38, distKm * 3.4) - (r ? 0 : 2);
       const wander = Math.sin(Date.now() / 7300) * 4.2 + (Math.random() - 0.5) * 3.4;
-      const signal = Math.round(Math.min(100, Math.max(8, base + wander)));
+      const hazardDrop = s.hazard?.def.signalDrop ?? 0;
+      const signal = Math.round(Math.min(100, Math.max(4, base + wander - hazardDrop)));
       const prev = s.comms.status;
       const status = signal >= 60 ? "ONLINE" : signal >= 35 ? "DEGRADED" : "ACQUIRING";
       const relay = COMMS.relays[Math.floor(tickCount / 25) % COMMS.relays.length].name;
@@ -528,6 +564,59 @@ export const useStore = create<AppStore>((set, get) => {
     },
 
     setCommsOpen: (v) => set((s) => ({ comms: { ...s.comms, open: v } })),
+
+    /** critical-warning popup — deduped by key (45 s cooldown), mirrored into the comms log */
+    pushAlert: (key, title, text, kind = "alert") => {
+      const now = Date.now();
+      if (alertCooldown[key] && now - alertCooldown[key] < 45000) return;
+      alertCooldown[key] = now;
+      set((s) => ({
+        comms: {
+          ...s.comms,
+          alerts: [...s.comms.alerts, { id: alertId++, key, title, text, kind, t: now }].slice(-4),
+          messages: [...s.comms.messages, { id: commsId++, from: "mission" as const, text: `${title} — ${text}`, t: now, kind }].slice(-120),
+        },
+      }));
+    },
+
+    dismissAlert: (id) =>
+      set((s) => ({ comms: { ...s.comms, alerts: s.comms.alerts.filter((a) => a.id !== id) } })),
+
+    /** simulated hazard drill — alert + Mission Control shelter recommendation */
+    triggerHazard: (id) => {
+      const s = get();
+      const def = HAZARDS.find((h) => h.id === id);
+      if (!def) return;
+      const r = s.walk.readout;
+      const lon = r?.lon ?? s.site.lon;
+      const lat = r?.lat ?? s.site.lat;
+      const spd = r?.speedEff ?? s.eva.speedKmh;
+      const rec = bestBaseFor(def, lon, lat, s.route, spd);
+      if (!rec) return;
+      set({
+        hazard: {
+          id: def.id,
+          def,
+          startedT: Date.now(),
+          base: { name: rec.name, lon: rec.lon, lat: rec.lat, distM: rec.distM, bearing: rec.bearing, etaMin: rec.etaMin, why: rec.why },
+        },
+      });
+      get().pushAlert(`hazard-${def.id}`, `⚠ ${def.label.toUpperCase()} — SHELTER ADVISED`, `${def.brief} Recommended shelter: ${hazardAlertText(def, rec)}`, def.severity);
+      get().pushComms("mission", `MISSION CONTROL PRIORITY — ${def.label.toUpperCase()} DRILL INITIATED. ${def.brief} Proceed to ${rec.name} — ${(rec.distM / 1000).toFixed(2)} km at bearing ${rec.bearing.toFixed(0).padStart(3, "0")}°, ETA ≈ ${rec.etaMin} min at ${rec.speedKmh.toFixed(1)} km/h. ${rec.why}. ${def.rec}`, def.severity);
+      get().pushWalkEvent(`HAZARD DRILL · ${def.label.toUpperCase()} — R2B ${rec.bearing.toFixed(0).padStart(3, "0")}° · ${rec.etaMin} MIN`, def.severity === "alert" ? "warn" : "info");
+    },
+
+    clearHazard: () =>
+      set((s) => ({
+        hazard: null,
+        hazardAdviceNonce: s.hazardAdviceNonce,
+        comms: {
+          ...s.comms,
+          messages: [...s.comms.messages, { id: commsId++, from: "mission" as const, text: "DRILL COMPLETE — conditions nominal. Well executed, EVA-1. Resetting suit models to nominal.", t: Date.now(), kind: "info" as const }].slice(-120),
+        },
+      })),
+
+    bumpHazardAdvice: () => set((s) => ({ hazardAdviceNonce: s.hazardAdviceNonce + 1 })),
   };
 });
 

@@ -7,7 +7,8 @@ import { useEvaPlan, useSpaceWeather } from "@/lib/hooks";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { useStore } from "@/lib/store";
 import { fmtLst } from "@/lib/eva";
-import { Radio, Wind, Activity, Satellite } from "lucide-react";
+import { Radio, Wind, Activity, Satellite, AlertTriangle } from "lucide-react";
+import { HAZARDS } from "@/lib/hazards";
 
 export function ConditionsPanel() {
   const sw = useSpaceWeather();
@@ -36,10 +37,11 @@ export function ConditionsPanel() {
   return (
     <PanelFrame id="conditions" title="SURFACE CONDITIONS" subtitle="weather · radiation · comms">
       <Tabs defaultValue="weather" className="w-full">
-        <TabsList className="grid w-full grid-cols-3 bg-transparent">
+        <TabsList className="grid w-full grid-cols-4 bg-transparent">
           <TabsTrigger value="weather" className="data-[state=active]:text-[var(--hud-amber)]"><Wind className="mb-0.5 inline h-3.5 w-3.5" /> WX</TabsTrigger>
           <TabsTrigger value="radiation" className="data-[state=active]:text-[var(--hud-amber)]"><Activity className="mb-0.5 inline h-3.5 w-3.5" /> RAD</TabsTrigger>
           <TabsTrigger value="comms" className="data-[state=active]:text-[var(--hud-amber)]"><Radio className="mb-0.5 inline h-3.5 w-3.5" /> COMMS</TabsTrigger>
+          <TabsTrigger value="drills" className="data-[state=active]:text-[#ff9db9]"><AlertTriangle className="mb-0.5 inline h-3.5 w-3.5" /> DRILLS</TabsTrigger>
         </TabsList>
 
         <TabsContent value="weather" className="mt-3 space-y-3">
@@ -156,7 +158,61 @@ export function ConditionsPanel() {
             </p>
           )}
         </TabsContent>
+        <TabsContent value="drills" className="mt-3 space-y-3">
+          <div className="rounded-sm border border-[rgba(255,95,143,0.45)] bg-[rgba(50,12,14,0.35)] p-3">
+            <h3 className="hud-label mb-2 flex items-center gap-1.5 text-[#ff9db9]">
+              <AlertTriangle className="h-3.5 w-3.5" /> hazard drill simulator
+            </h3>
+            <p className="mb-3 text-[11px] leading-snug text-[var(--hud-text)]">
+              Trigger a simulated surface emergency. Mission Control ranks every shelter —
+              your BASE waypoints plus the Homestead Hollow lander fallback — by walk time
+              <i> adjusted for shielding</i>, then pops a critical alert and directs you to the
+              best one. Suit models respond: leaks burn O₂ faster, solar events multiply dose,
+              dust storms close the sky.
+            </p>
+            <DrillButtons />
+          </div>
+        </TabsContent>
       </Tabs>
     </PanelFrame>
+  );
+}
+
+function DrillButtons() {
+  const hazard = useStore((s) => s.hazard);
+  const triggerHazard = useStore((s) => s.triggerHazard);
+  const clearHazard = useStore((s) => s.clearHazard);
+  if (hazard) {
+    return (
+      <div className="rounded-sm border border-[rgba(255,95,143,0.55)] bg-[rgba(255,95,143,0.08)] p-2.5">
+        <div className="font-display text-[11px] text-[#ff9db9]">● ACTIVE — {hazard.def.label.toUpperCase()}</div>
+        <div className="mt-1 text-[10px] leading-snug text-[var(--hud-text)]">
+          Shelter: <b className="text-[var(--hud-amber)]">{hazard.base.name}</b> — {hazard.base.why}
+        </div>
+        <button className="hud-btn mt-2 !min-h-0 w-full !py-1.5 !text-[10px]" onClick={() => clearHazard()}>
+          end drill — conditions nominal
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1.5">
+      {HAZARDS.map((h) => (
+        <button
+          key={h.id}
+          className="flex w-full items-start justify-between gap-2 rounded-sm border border-[var(--hud-border-dim)] px-2.5 py-2 text-left transition-colors hover:border-[rgba(255,95,143,0.5)]"
+          onClick={() => triggerHazard(h.id)}
+          title={h.brief}
+        >
+          <span className="min-w-0">
+            <span className="block text-[11px] text-[var(--hud-text)]">{h.label}</span>
+            <span className="hud-label block truncate">{h.brief}</span>
+          </span>
+          <span className={`mt-0.5 shrink-0 font-display text-[8px] tracking-[0.15em] ${h.severity === "alert" ? "text-[var(--hud-red)]" : "text-[var(--hud-amber)]"}`}>
+            {h.severity === "alert" ? "CRIT" : "WARN"}
+          </span>
+        </button>
+      ))}
+    </div>
   );
 }

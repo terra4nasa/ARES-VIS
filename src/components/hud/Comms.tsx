@@ -22,9 +22,27 @@ export function CommsEngine() {
   const latency = sw?.earthMars.lightMin ?? null;
 
   useEffect(() => {
-    const tick = setInterval(() => useStore.getState().tickComms(latency ?? undefined), 1000);
+    const tick = setInterval(() => {
+      const s = useStore.getState();
+      s.tickComms(latency ?? undefined);
+      /* threshold watch — critical warnings pop over any view, with recommendations */
+      const r = s.walk.readout;
+      if (r) {
+        if (r.o2Pct <= 20) {
+          s.pushAlert("o2-critical", "⚠ O₂ CRITICAL", `Suit reserve at ${r.o2Pct.toFixed(0)}% — terminate the EVA and return to ${s.route[0]?.name ?? "BASE"} immediately. Minimal exertion; skip all remaining science stops.`, "alert");
+        } else if (r.o2Pct <= 45) {
+          s.pushAlert("o2-low", "O₂ LOW — PLAN TURNAROUND", `Suit reserve at ${r.o2Pct.toFixed(0)}% — past the halfway rule. Finish the current task and start the turnaround leg toward ${s.route[0]?.name ?? "BASE"}.`, "warn");
+        }
+        if (s.comms.signal < 30) {
+          s.pushAlert("signal", "SIGNAL DEGRADED", `UHF link at ${s.comms.signal}% via ${s.comms.relay}. Expect message latency — if the link drops entirely, continue autonomously per the pre-uploaded plan.`, "warn");
+        }
+      }
+      if (sw?.marsSurface.evaState === "SPE_POSTPONE") {
+        s.pushAlert("spe", "⚠ SOLAR PARTICLE EVENT", "NOAA SWPC reports an SPE in progress — dose rate elevated for surface ops. Postpone any new EVA; if already outside, shelter in the habitat until the proton peak passes.", "alert");
+      }
+    }, 1000);
     return () => clearInterval(tick);
-  }, [latency]);
+  }, [latency, sw]);
 
   useEffect(() => {
     let alive = true;
@@ -125,7 +143,7 @@ export function CommsPanel({ inVisor }: { inVisor: boolean }) {
   return (
     <div
       className={`pointer-events-auto absolute right-2 z-[530] flex w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-sm border border-[var(--hud-border)] bg-[rgba(5,8,12,0.94)] shadow-[0_0_28px_rgba(0,0,0,0.6)] backdrop-blur-md md:right-3 ${
-        inVisor ? "bottom-[calc(274px_+_env(safe-area-inset-bottom))] z-[492]" : "bottom-14"
+        inVisor ? "bottom-[calc(274px*var(--hud-zoom,1)_+_env(safe-area-inset-bottom))] z-[492]" : "bottom-14"
       }`}
       role="complementary"
       aria-label="Communications"

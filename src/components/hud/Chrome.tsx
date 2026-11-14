@@ -1,5 +1,5 @@
 "use client";
-import { Orbit, Crosshair, Layers, Map as MapIcon, MapPin, FlaskConical, Gauge, Database, Printer, Radar, Radio, Satellite, Columns2, User, Users } from "lucide-react";
+import { Orbit, Crosshair, Layers, Map as MapIcon, MapPin, FlaskConical, Gauge, Database, Printer, Radar, Radio, Satellite, User, Users } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { fmtDist, fmtLonLat } from "@/lib/mars";
 import { loadTerrain, sampleElevation } from "@/lib/terrain";
@@ -47,8 +47,6 @@ export function TopBar() {
   const openPanel = useStore((s) => s.openPanel);
   const visorMode = useStore((s) => s.visorMode);
   const setVisorMode = useStore((s) => s.setVisorMode);
-  const splitMode = useStore((s) => s.splitMode);
-  const setSplitMode = useStore((s) => s.setSplitMode);
   const mapZoom = useStore((s) => s.mapZoom);
   const site = useStore((s) => s.site);
   const [cursorElev, setCursorElev] = useState<number | null>(null);
@@ -136,22 +134,13 @@ export function TopBar() {
             <span className="hidden sm:inline">map view</span>
           </button>
           <button
-            className={`view-seg ${visorMode && !splitMode ? "view-seg-on" : ""}`}
-            onClick={() => { setSplitMode(false); if (!visorMode) setVisorMode(true); }}
-            aria-pressed={visorMode && !splitMode}
+            className={`view-seg ${visorMode ? "view-seg-on" : ""}`}
+            onClick={() => { if (!visorMode) setVisorMode(true); }}
+            aria-pressed={visorMode}
             title="Visor View — first-person astronaut perspective (prefs inside)"
           >
-            <Radar className={`h-4 w-4 ${visorMode && !splitMode ? "animate-pulse" : ""}`} />
+            <Radar className={`h-4 w-4 ${visorMode ? "animate-pulse" : ""}`} />
             <span className="hidden sm:inline">visor view</span>
-          </button>
-          <button
-            className={`view-seg ${splitMode ? "view-seg-on" : ""}`}
-            onClick={() => setSplitMode(!splitMode)}
-            aria-pressed={splitMode}
-            title="Split View — 2D map and helmet visor side by side"
-          >
-            <Columns2 className="h-4 w-4" />
-            <span className="hidden md:inline">split view</span>
           </button>
         </div>
       </div>

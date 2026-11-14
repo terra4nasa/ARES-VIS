@@ -130,6 +130,14 @@ summary {
   backdrop-filter: blur(10px);
 }
 
+/* inside the visor the HUD sits over a continuously repainting WebGL canvas —
+ * backdrop-filter over that composition is the flicker source on large
+ * monitors, so visor panels opt into a solid backdrop instead */
+.visor-solid .hud-panel {
+  backdrop-filter: none;
+  background: rgba(7, 10, 15, 0.93);
+}
+
 .hud-chip {
   display: inline-flex;
   align-items: center;
@@ -223,6 +231,7 @@ summary {
 .hud-glow-cyan { text-shadow: 0 0 8px rgba(84, 224, 255, 0.6); }
 
 .blink { animation: hudBlink 1.6s steps(2, start) infinite; }
+.blink-slow { animation: hudBlink 2.6s steps(2, start) infinite; }
 @keyframes hudBlink { 0% { opacity: 1; } 50% { opacity: 0.25; } 100% { opacity: 1; } }
 
 .boot-flicker { animation: bootFlicker 2.4s linear infinite; }

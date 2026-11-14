@@ -7,6 +7,7 @@ import { FrameCorners, CompassTape, TopBar, StatusBar, IconRail } from "@/compon
 import { VisorOverlay } from "@/components/hud/Visor";
 import { BootOverlay } from "@/components/hud/BootOverlay";
 import { CommsEngine, CommsPanel } from "@/components/hud/Comms";
+import { CriticalAlerts, HazardBanner } from "@/components/hud/Alerts";
 import { LayersPanel } from "@/components/panels/LayersPanel";
 import { RoutePanel } from "@/components/panels/RoutePanel";
 import { SciencePanel } from "@/components/panels/SciencePanel";
@@ -31,7 +32,6 @@ const MapCanvas = dynamic(() => import("@/components/map/MapCanvas"), {
 
 export function AppShell() {
   const visorMode = useStore((s) => s.visorMode);
-  const splitMode = useStore((s) => s.splitMode);
   const planMode = useStore((s) => s.planMode);
   const [mounted, setMounted] = useState(false);  useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
@@ -53,23 +53,16 @@ export function AppShell() {
     <div className="flex h-dvh flex-col overflow-hidden select-none" style={{ background: "var(--hud-bg)" }}>
       <TopBar />
       <div className="relative flex min-h-0 flex-1">
-        {(!visorMode || splitMode) && <IconRail />}
+        {(!visorMode) && <IconRail />}
         <main className="relative min-w-0 flex-1 overflow-hidden" aria-label="Mars map display">
           <MapCanvas />
           <div className="vignette" />
           <div className="scanlines" />
           <div className="sweep" />
-          {(!visorMode || splitMode) && <CompassTape />}
-          {(!visorMode || splitMode) && <FrameCorners />}
+          {(!visorMode) && <CompassTape />}
+          {(!visorMode) && <FrameCorners />}
           {visorMode && (
-            <div
-              className={
-                splitMode
-                  ? "absolute inset-y-0 right-0 z-[460] w-1/2 overflow-hidden border-l-2 border-[var(--hud-orange)]"
-                  : "absolute inset-0 z-[460]"
-              }
-              aria-label="Helmet visor display"
-            >
+            <div className="absolute inset-0 z-[460]" aria-label="Helmet visor display">
               <VisorOverlay />
             </div>
           )}
@@ -91,6 +84,9 @@ export function AppShell() {
           {/* working comms link — runs in both views (F3) */}
           <CommsEngine />
           <CommsPanel inVisor={visorMode} />
+          {/* mission-control critical warnings + hazard drill banner (both views) */}
+          <CriticalAlerts />
+          <HazardBanner />
         </main>
       </div>
       <StatusBar />
