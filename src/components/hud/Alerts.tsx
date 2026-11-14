@@ -10,7 +10,7 @@
  *                   active: recommended shelter, distance, bearing, ETA and a
  *                   live countdown, with locate/end controls.
  */
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ShieldAlert, Crosshair, Square } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { fmtDist, compassPoint } from "@/lib/mars";
@@ -76,21 +76,31 @@ export function CriticalAlerts() {
 /** persistent hazard-drill banner — both map and visor views */
 export function HazardBanner() {
   const hazard = useStore((s) => s.hazard);
+  const readout = useStore((s) => s.walk.readout);
+  const route = useStore((s) => s.route);
+  const site = useStore((s) => s.site);
+  const plannedSpeed = useStore((s) => s.eva.speedKmh);
   const clearHazard = useStore((s) => s.clearHazard);
   const focus = useStore((s) => s.focus);
+  const [, setClockTick] = useState(0);
+
+  /* T+ clock tick — also nudges the periodic Mission Control advice cadence */
   useEffect(() => {
     if (!hazard) return;
-    /* refresh the shelter recommendation every 20 s — the best base can change as you walk */
-    const iv = setInterval(() => useStore.getState().bumpHazardAdvice(), 20000);
+    const iv = setInterval(() => setClockTick((t) => t + 1), 20000);
     return () => clearInterval(iv);
   }, [hazard?.startedT]);
 
-  /* recompute recommendation toward current position every advice bump */
-  const rec = useStore((s) => {
-    if (!s.hazard) return null;
-    const r = s.walk.readout;
-    return bestShelter(s, r?.lon, r?.lat);
-  });
+  /* re-solve the shelter recommendation toward the current position. Computed
+   * in render, NOT in a store selector: a fresh object per snapshot makes
+   * React's useSyncExternalStore loop ("getSnapshot should be cached") and
+   * crash the app the moment a drill is triggered */
+  const rec = useMemo(() => {
+    if (!hazard) return null;
+    const spd = readout?.speedEff || plannedSpeed;
+    return bestBaseFor(hazard.def, readout?.lon ?? site.lon, readout?.lat ?? site.lat, route, spd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hazard?.id, readout?.lon, readout?.lat, readout?.speedEff, plannedSpeed, route, site.lon, site.lat]);
 
   if (!hazard || !rec) return null;
   const color = hazard.def.severity === "alert" ? "var(--hud-red)" : "var(--hud-amber)";
@@ -128,18 +138,4 @@ export function HazardBanner() {
       </div>
     </div>
   );
-}
-
-/* helper — freshest shelter recommendation for the current position */
-function bestShelter(
-  s: ReturnType<typeof useStore.getState>,
-  lon?: number,
-  lat?: number
-): { name: string; lon: number; lat: number; distM: number; bearing: number; etaMin: number } | null {
-  if (!s.hazard) return null;
-  const pLon = lon ?? s.site.lon;
-  const pLat = lat ?? s.site.lat;
-  const spd = s.walk.readout?.speedEff || s.eva.speedKmh;
-  const rec = bestBaseFor(s.hazard.def, pLon, pLat, s.route, spd);
-  return rec ? { name: rec.name, lon: rec.lon, lat: rec.lat, distM: rec.distM, bearing: rec.bearing, etaMin: rec.etaMin } : null;
 }

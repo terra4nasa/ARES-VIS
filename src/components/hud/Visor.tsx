@@ -853,12 +853,14 @@ function TerrainDockCard({ r }: { r: WalkReadout }) {
 
 /* ---------------- F5: interactive control cluster ---------------- */
 
-function ControlCluster({ onPrefs, playing, manual, speedMult, finished }: {
+function ControlCluster({ onPrefs, playing, manual, speedMult, finished, drillOpen, onToggleDrill }: {
   onPrefs: () => void;
   playing: boolean;
   manual: boolean;
   speedMult: number;
   finished: boolean;
+  drillOpen: boolean;
+  onToggleDrill: () => void;
 }) {
   const setWalkManual = useStore((s) => s.setWalkManual);
   const setWalkPlaying = useStore((s) => s.setWalkPlaying);
@@ -870,7 +872,6 @@ function ControlCluster({ onPrefs, playing, manual, speedMult, finished }: {
   const openPanel = useStore((s) => s.openPanel);
   const commsOpen = useStore((s) => s.comms.open);
   const hazard = useStore((s) => s.hazard);
-  const [drillOpen, setDrillOpen] = useState(false);
   const dockBtn = "hud-btn !min-h-0 !flex-col !gap-0.5 !px-1 !py-1.5 text-[8px] leading-none";
   return (
     <DockCard minW={214} className="order-first border-[var(--hud-border)] 2xl:order-none">
@@ -909,14 +910,13 @@ function ControlCluster({ onPrefs, playing, manual, speedMult, finished }: {
         </button>
         <button
           className={`${dockBtn} ${drillOpen || hazard ? "active !border-[rgba(255,95,143,0.65)] !text-[#ff9db9]" : ""}`}
-          onClick={() => setDrillOpen(!drillOpen)}
+          onClick={onToggleDrill}
           title="Hazard drill simulator — Mission Control directs you to the best shelter"
         >
           <AlertTriangle className="h-4 w-4" />{hazard ? "drill!" : "drill"}
         </button>
         <span />
       </div>
-      {drillOpen && <HazardDrillMenu onClose={() => setDrillOpen(false)} />}
     </DockCard>
   );
 }
@@ -928,8 +928,8 @@ function HazardDrillMenu({ onClose }: { onClose: () => void }) {
   const triggerHazard = useStore((s) => s.triggerHazard);
   const clearHazard = useStore((s) => s.clearHazard);
   return (
-    <div className="pointer-events-auto absolute bottom-[calc(286px*var(--hud-zoom,1)_+_env(safe-area-inset-bottom))] left-2 z-[500] w-[min(340px,calc(100vw-24px))] md:left-3">
-      <div className="hud-panel rounded-sm p-3">
+    <div className="pointer-events-auto absolute bottom-[calc(286px*var(--hud-zoom,1)_+_env(safe-area-inset-bottom))] left-2 z-[500] w-[340px] max-w-[calc(100vw-24px)] md:left-3">
+      <div className="hud-panel max-h-[calc(100dvh-310px)] overflow-y-auto rounded-sm p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <span className="font-display flex items-center gap-1.5 text-[12px] tracking-[0.18em] text-[#ff9db9]">
             <AlertTriangle className="h-3.5 w-3.5" /> HAZARD DRILLS
@@ -981,6 +981,7 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
   const walk = useStore((s) => s.walk);
   const manual = useStore((s) => s.walk.manual);
   const hazard = useStore((s) => s.hazard);
+  const [drillOpen, setDrillOpen] = useState(false);
   if (!r) return null;
   const nextWp = route[Math.min(r.nextIdx, route.length - 1)];
   const etaH = r.speedEff > 0.05 ? r.nextDistM / 1000 / r.speedEff : 0;
@@ -1110,9 +1111,12 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
           <LocationBeaconCard />
           {prefs.comms && <CommsDockCard onOpen={() => useStore.getState().setCommsOpen(!useStore.getState().comms.open)} />}
           {prefs.minimap && <MiniMap size={112} />}
-          <ControlCluster onPrefs={onPrefs} playing={walk.playing} manual={manual} speedMult={walk.speedMult} finished={!!r.atEnd} />
+          <ControlCluster onPrefs={onPrefs} playing={walk.playing} manual={manual} speedMult={walk.speedMult} finished={!!r.atEnd} drillOpen={drillOpen} onToggleDrill={() => setDrillOpen((v) => !v)} />
         </div>
       </div>
+      {/* hazard drill menu floats OUTSIDE the dock row — nesting it inside the
+          scrollable dock clipped its top items off-screen at short viewports */}
+      {drillOpen && <HazardDrillMenu onClose={() => setDrillOpen(false)} />}
     </div>
   );
 }
