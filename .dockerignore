@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+.git
+.github
+.env*
+db
+download
+upload
+skills
+tool-results
+tests
+examples
+*.log
+Dockerfile
+docker-compose.yml
+README.md
