@@ -1,0 +1,483 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* shadcn/ui theme tokens (dark HUD palette) */
+:root {
+  --background: #05070b;
+  --foreground: #d7e2ec;
+  --card: #0b1017;
+  --card-foreground: #d7e2ec;
+  --popover: #0b1017;
+  --popover-foreground: #d7e2ec;
+  --primary: #ff7a2f;
+  --primary-foreground: #0b0f14;
+  --secondary: #131a24;
+  --secondary-foreground: #ffb347;
+  --muted: #131a24;
+  --muted-foreground: #7c8b99;
+  --accent: #1a2230;
+  --accent-foreground: #ffb347;
+  --destructive: #f87171;
+  --destructive-foreground: #0b0f14;
+  --border: rgba(255, 122, 47, 0.16);
+  --input: #1a2230;
+  --ring: #ff7a2f;
+  --radius: 0.25rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+}
+
+/* ---------- HUD theme tokens ---------- */
+:root {
+  --hud-bg: #05070b;
+  --hud-panel: rgba(9, 13, 19, 0.88);
+  --hud-border: rgba(255, 122, 47, 0.32);
+  --hud-border-dim: rgba(255, 122, 47, 0.14);
+  --hud-orange: #ff7a2f;
+  --hud-amber: #ffb347;
+  --hud-cyan: #54e0ff;
+  --hud-green: #4ade80;
+  --hud-red: #f87171;
+  --hud-text: #d7e2ec;
+  --hud-dim: #7c8b99;
+}
+
+html,
+body {
+  background: var(--hud-bg);
+  color: var(--hud-text);
+  font-family: "Share Tech Mono", ui-monospace, monospace;
+  /* tablets / phones: kill iOS rubber-band bounce and the gray tap flash */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* touch targets: tap = click, never a double-tap zoom (tablets / phones) */
+button,
+[role="button"],
+label,
+summary {
+  touch-action: manipulation;
+}
+
+.font-display {
+  font-family: "Orbitron", sans-serif;
+}
+
+/* ---------- HUD chrome ---------- */
+.hud-frame-corner {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border-color: var(--hud-orange);
+  opacity: 0.85;
+  pointer-events: none;
+  z-index: 500;
+}
+.hud-frame-corner.tl { top: 64px; left: 64px; border-top: 2px solid; border-left: 2px solid; }
+.hud-frame-corner.tr { top: 64px; right: 64px; border-top: 2px solid; border-right: 2px solid; }
+.hud-frame-corner.bl { bottom: 44px; left: 64px; border-bottom: 2px solid; border-left: 2px solid; }
+.hud-frame-corner.br { bottom: 44px; right: 64px; border-bottom: 2px solid; border-right: 2px solid; }
+
+.scanlines {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 460;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.015) 0px,
+    rgba(255, 255, 255, 0.015) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  mix-blend-mode: overlay;
+}
+.vignette {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 455;
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(2, 4, 8, 0.55) 100%);
+}
+
+.hud-panel {
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-border-dim);
+  backdrop-filter: blur(10px);
+}
+
+.hud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid rgba(255, 122, 47, 0.3);
+  border-radius: 2px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: #a9bccb;
+  text-transform: uppercase;
+}
+
+/* buttons: brighter text, clearer borders, visible focus (contrast pass) */
+.hud-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.85rem;
+  border: 1px solid rgba(255, 122, 47, 0.55);
+  color: #ffc973;
+  background: rgba(255, 122, 47, 0.1);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 500;
+  border-radius: 2px;
+  transition: all 0.15s ease;
+  min-height: 34px;
+}
+.hud-btn:hover {
+  background: rgba(255, 122, 47, 0.22);
+  box-shadow: 0 0 16px rgba(255, 122, 47, 0.35);
+}
+.hud-btn.active {
+  background: var(--hud-orange);
+  color: #0b0f14;
+  font-weight: 700;
+}
+.hud-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.hud-btn:focus-visible { outline: 2px solid var(--hud-cyan); outline-offset: 1px; }
+
+/* segmented view switch (visor ↔ map) */
+.view-seg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.42rem 0.8rem;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #ffc973;
+  background: rgba(8, 12, 18, 0.8);
+  min-height: 34px;
+  transition: all 0.15s ease;
+}
+.view-seg:hover { background: rgba(255, 122, 47, 0.18); }
+.view-seg-on {
+  background: var(--hud-orange);
+  color: #0b0f14;
+  font-weight: 700;
+  box-shadow: 0 0 12px rgba(255, 122, 47, 0.4);
+}
+
+.hud-input {
+  background: rgba(8, 12, 18, 0.9);
+  border: 1px solid rgba(255, 122, 47, 0.4);
+  color: var(--hud-text);
+  font-family: "Share Tech Mono", monospace;
+  font-size: 12px;
+  padding: 0.4rem 0.6rem;
+  border-radius: 2px;
+  width: 100%;
+}
+.hud-input:focus {
+  outline: none;
+  border-color: var(--hud-cyan);
+  box-shadow: inset 0 0 0 1px rgba(84, 224, 255, 0.35);
+}
+
+.hud-label {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9fb2c2;
+}
+
+.hud-glow { text-shadow: 0 0 8px rgba(255, 122, 47, 0.6); }
+.hud-glow-cyan { text-shadow: 0 0 8px rgba(84, 224, 255, 0.6); }
+
+.blink { animation: hudBlink 1.6s steps(2, start) infinite; }
+@keyframes hudBlink { 0% { opacity: 1; } 50% { opacity: 0.25; } 100% { opacity: 1; } }
+
+.boot-flicker { animation: bootFlicker 2.4s linear infinite; }
+@keyframes bootFlicker { 0%, 100% { opacity: 1; } 92% { opacity: 1; } 93% { opacity: 0.7; } 94% { opacity: 1; } }
+
+@keyframes sweepLine {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(2400%); }
+}
+.sweep {
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 40px;
+  z-index: 461;
+  background: linear-gradient(to bottom, transparent, rgba(84, 224, 255, 0.07), transparent);
+  animation: sweepLine 7s linear infinite;
+}
+
+/* ---------- Leaflet dark integration ---------- */
+.leaflet-container {
+  background: #03050a;
+  font-family: "Share Tech Mono", monospace;
+}
+.leaflet-control-attribution {
+  background: rgba(5, 8, 12, 0.8) !important;
+  color: #5b6874 !important;
+  font-size: 9px !important;
+  border: 1px solid var(--hud-border-dim);
+}
+.leaflet-control-attribution a { color: var(--hud-cyan) !important; }
+.leaflet-control-scale-line {
+  background: rgba(5, 8, 12, 0.8) !important;
+  border: 1px solid var(--hud-border) !important;
+  color: var(--hud-amber) !important;
+  font-family: "Share Tech Mono", monospace !important;
+  font-size: 10px !important;
+}
+
+.wp-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(10, 14, 20, 0.9);
+  border: 2px solid var(--hud-orange);
+  color: var(--hud-amber);
+  font-size: 11px;
+  font-weight: bold;
+  box-shadow: 0 0 10px rgba(255, 122, 47, 0.5);
+}
+.poi-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--hud-cyan);
+  background: rgba(84, 224, 255, 0.25);
+  box-shadow: 0 0 8px rgba(84, 224, 255, 0.7);
+}
+.base-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--hud-green);
+  background: rgba(74, 222, 128, 0.25);
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.8);
+}
+.quake-icon {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #f43f5e;
+  background: rgba(244, 63, 94, 0.3);
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.8);
+}
+
+/* ---------- shadcn control theming (HUD) ---------- */
+[data-slot="slider-track"] { background: rgba(255, 122, 47, 0.22) !important; }
+[data-slot="slider-range"] { background: var(--hud-orange) !important; }
+[data-slot="slider-thumb"] {
+  border-color: var(--hud-amber) !important;
+  background: #0b0f14 !important;
+  box-shadow: 0 0 8px rgba(255, 122, 47, 0.5) !important;
+}
+[data-slot="switch-track"] {
+  background: rgba(255, 122, 47, 0.18) !important;
+  border: 1px solid var(--hud-border-dim);
+}
+[data-slot="switch-track"][data-state="checked"] { background: var(--hud-orange) !important; }
+[data-slot="switch-thumb"] { background: var(--hud-amber) !important; }
+[data-slot="tab-trigger"] {
+  color: var(--hud-dim);
+  letter-spacing: 0.14em;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+[data-slot="tab-trigger"][data-state="active"] {
+  color: var(--hud-amber);
+  border-bottom-color: var(--hud-orange);
+}
+
+/* ---------- scrollbars ---------- */
+.hud-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.hud-scroll::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.03); }
+.hud-scroll::-webkit-scrollbar-thumb { background: rgba(255, 122, 47, 0.35); border-radius: 3px; }
+
+/* ---------- print (mission brief) ---------- */
+@media print {
+  body { background: #fff !important; color: #111 !important; }
+  .no-print { display: none !important; }
+  .print-brief { position: static !important; inset: auto !important; width: 100% !important; max-width: 100% !important; }
+  .print-brief * { color: #111 !important; border-color: #bbb !important; background: transparent !important; text-shadow: none !important; }
+  .print-brief .keep-color { color: var(--hud-orange) !important; }
+}
+
+/* ---------- helmet visor mode ---------- */
+.visor-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 465;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 118% 112% at 50% 48%, transparent 56%, rgba(1, 2, 4, 0.55) 74%, rgba(0, 0, 0, 0.94) 92%),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.35), transparent 12%, transparent 88%, rgba(0, 0, 0, 0.4));
+}
+.visor-mask::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(118deg, transparent 30%, rgba(180, 220, 255, 0.045) 38%, transparent 46%, transparent 62%, rgba(180, 220, 255, 0.03) 68%, transparent 74%);
+}
+.visor-mask::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  width: 34%;
+  height: 3px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: rgba(255, 179, 71, 0.22);
+  filter: blur(2px);
+}
+
+/* visor power-on flicker (3D view container) */
+@keyframes visorBoot {
+  0% { opacity: 0; filter: brightness(3) saturate(0.2); clip-path: inset(47% 0 47% 0); }
+  16% { opacity: 1; clip-path: inset(31% 0 31% 0); }
+  30% { opacity: 0.35; clip-path: inset(40% 0 40% 0); }
+  46% { opacity: 1; clip-path: inset(9% 0 9% 0); }
+  58% { opacity: 0.65; clip-path: inset(0 0 0 0); }
+  72% { opacity: 1; }
+  100% { opacity: 1; filter: none; clip-path: inset(0 0 0 0); }
+}
+.visor-boot { animation: visorBoot 0.75s ease-out both; }
+
+
+.astro-marker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(6, 14, 22, 0.72);
+  border: 1.5px solid rgba(84, 224, 255, 0.85);
+  box-shadow: 0 0 14px rgba(84, 224, 255, 0.75);
+}
+.astro-marker svg {
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.65));
+}
+.astro-marker span {
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+  border: 2px solid rgba(84, 224, 255, 0.75);
+  animation: astroPulse 1.8s ease-out infinite;
+}
+@keyframes astroPulse {
+  0% { transform: scale(0.55); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* visor event toast: in → hold → out (4.5 s total, then invisible) */
+.walk-event {
+  animation: walkEvent 4.5s ease forwards;
+}
+@keyframes walkEvent {
+  0% { opacity: 0; transform: translateY(-8px); }
+  6% { opacity: 1; transform: translateY(0); }
+  88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------- F13: critical O₂ edge vignette ---------- */
+.o2-crit-vignette {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 469;
+  box-shadow: inset 0 0 130px rgba(248, 113, 113, 0.4);
+  animation: o2Pulse 1.4s ease-in-out infinite;
+}
+@keyframes o2Pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ---------- F12: map graticule labels ---------- */
+.grid-label {
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  color: rgba(160, 229, 255, 0.95);
+  text-shadow: 0 0 4px #03050a;
+  background: rgba(5, 8, 12, 0.72);
+  border: 1px solid rgba(84, 224, 255, 0.3);
+  padding: 0 4px;
+  white-space: nowrap;
+  transform: translate(-50%, 4px);
+}
+
+/* idle (non-EVA) location beacon on the map — dimmer pulse */
+.astro-marker.idle {
+  border-color: rgba(84, 224, 255, 0.55);
+  box-shadow: 0 0 8px rgba(84, 224, 255, 0.45);
+  opacity: 0.92;
+}
+
+/* permanent waypoint labels — always-visible location names (no click needed) */
+.wp-label {
+  font-family: "Share Tech Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #ffc973 !important;
+  text-shadow: 0 0 4px #03050a;
+  background: rgba(5, 8, 12, 0.85) !important;
+  border: 1px solid rgba(255, 122, 47, 0.45) !important;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.wp-label::before {
+  border-top-color: rgba(255, 122, 47, 0.45) !important;
+}
+
+@media print {
+  .visor-mask, .astro-marker { display: none !important; }
+}
+
+@media (max-width: 640px) {
+  .hud-frame-corner.tl, .hud-frame-corner.tr { top: 58px; }
+  .hud-frame-corner.tl, .hud-frame-corner.bl { left: 58px; }
+  .hud-frame-corner.tr, .hud-frame-corner.br { right: 12px; }
+  .hud-frame-corner.bl, .hud-frame-corner.br { bottom: 60px; }
+}
