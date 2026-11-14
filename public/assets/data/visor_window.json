@@ -1,0 +1,10 @@
+{
+ "w": 1536,
+ "h": 1536,
+ "lon0": 135.3872681,
+ "lat1": 4.769783,
+ "lon1": 135.9146118,
+ "lat0": 4.2424393,
+ "resM": 20.29,
+ "src": "Esri OnMars CTX mosaic level 12 (~20 m/px), grayscale, tinted client-side"
+}

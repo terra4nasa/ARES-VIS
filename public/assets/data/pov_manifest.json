@@ -1,0 +1,32 @@
+[
+ {
+  "file": "assets/img/pov_panorama.jpg",
+  "title": "InSight Sol 14 Panorama",
+  "credit": "NASA/JPL-Caltech",
+  "kb": 532
+ },
+ {
+  "file": "assets/img/pov_hirise_site.jpg",
+  "title": "Advance Inspection of NASA Next Mars Landing Site",
+  "credit": "NASA/JPL-Caltech/University of Arizona",
+  "kb": 273
+ },
+ {
+  "file": "assets/img/pov_final_location.jpg",
+  "title": "InSight's Final Selfie",
+  "credit": "NASA/JPL-Caltech",
+  "kb": 141
+ },
+ {
+  "file": "assets/img/pov_mole.png",
+  "title": "Current Position of InSight's Mole (Illustration)",
+  "credit": "NASA/JPL-Caltech",
+  "kb": 186
+ },
+ {
+  "file": "assets/img/pov_selfie.jpg",
+  "title": "InSight's First Selfie",
+  "credit": "NASA/JPL-Caltech",
+  "kb": 202
+ }
+]
