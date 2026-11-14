@@ -2,6 +2,9 @@
 
 **NASA Space Apps 2026 · Interplanetary Survival Guide: Martian Map**
 
+**🔴 Live app:** **[https://ares-vis.vercel.app](https://ares-vis.vercel.app/)**
+— full 2D planner + 3D visor + NASA live data (APOD, EPIC, NEO watch, space weather).
+
 ARES-VIS fuses decades of robotic Mars-mission data into one hyper-local planning
 tool for a Marswalk across **Elysium Planitia** — the plains where NASA's InSight
 lander listened to Mars quakes for four years. Plan the EVA on a 2D orbital map,
