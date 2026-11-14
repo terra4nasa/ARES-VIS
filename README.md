@@ -35,6 +35,11 @@ then step into a first-person **3D helmet visor** and physically walk the route.
 - **Biometrics & radiation visor panels** — heart rate, core temp, suit pressure
   and work-rate MET live beside a real-time dose rate (µSv/h) driven by the
   live space-weather feed; configurable per-block in visor prefs
+- **Floating HUD panel workspace** — every visor panel (control cluster,
+  navigation, EVA, biometrics, terrain, radiation, location, comms, mini-map)
+  is a movable window: drag by its title bar (viewport edges snap), resize
+  from the corner, collapse to the header, close it, and re-add / re-stack /
+  reset from the panel library; the layout persists with your mission file
 - **Dash-to-walk manual control** — hands-free auto-traverse *or* take the foot
   controls: `WASD` / arrow keys / on-screen D-pad, **SHIFT to dash**, drag to
   look around; speed stays in the realistic suited-EVA range (~3.4 km/h walk,

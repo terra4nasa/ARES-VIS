@@ -8,7 +8,8 @@
  *  - VisorPrefs: per-block display preferences (persisted per user)
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Play, Pause, FastForward, X, Settings2, Footprints, SkipForward, Mountain, Gauge, Radio, ShieldAlert, Activity, FlaskConical, Zap, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Hand, MapPin, HeartPulse, AlertTriangle } from "lucide-react";
+import { Play, Pause, FastForward, X, Settings2, Footprints, SkipForward, Mountain, Gauge, Radio, ShieldAlert, Activity, FlaskConical, Zap, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Hand, MapPin, HeartPulse, AlertTriangle, GripVertical, Layers, RotateCcw } from "lucide-react";
+import { HUD_PANELS, hudPanelDef, type HudPanelId } from "@/lib/hudPanels";
 import { useStore, type VisorPrefs, VISOR_PRESET } from "@/lib/store";
 import { useRouteProfile, useSpaceWeather } from "@/lib/hooks";
 import { FirstPersonTerrain } from "@/components/hud/FirstPerson";
@@ -484,7 +485,10 @@ function CompassTape() {
 }
 
 /** top-down traverse mini-map with walker dot + live view cone (canvas, rAF) */
-function MiniMap({ size = 138 }: { size?: number }) {
+function MiniMap() {
+  /** tracks the floating panel width — resize the panel to zoom the map */
+  const panelW = useStore((s) => s.hudPanels.minimap.w);
+  const size = Math.max(96, Math.min(240, panelW - 22));
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const cv = ref.current;
@@ -595,7 +599,7 @@ function MiniMap({ size = 138 }: { size?: number }) {
     return () => cancelAnimationFrame(raf);
   }, [size]);
   return (
-    <div className="hud-panel justify-center rounded-full p-[3px]">
+    <div className="flex items-center justify-center">
       <canvas ref={ref} style={{ width: size, height: size }} className="rounded-full" />
     </div>
   );
@@ -667,23 +671,14 @@ function ReticleHud() {
   );
 }
 
-/* ================= live walk HUD — bottom dock ================= */
-
-/** compact dock card */
-function DockCard({ children, className = "", minW }: { children: React.ReactNode; className?: string; minW?: number }) {
-  return (
-    <div className={`hud-panel flex flex-col rounded-sm px-2.5 py-2 ${className}`} style={minW ? { minWidth: minW } : undefined}>
-      {children}
-    </div>
-  );
-}
+/* ================= live walk HUD — floating panel workspace ================= */
 
 /* ---------------- F13: large O₂ warning banner ---------------- */
 
 function O2Banner({ pct, critical }: { pct: number; critical: boolean }) {
   const color = critical ? "var(--hud-red)" : "var(--hud-amber)";
   return (
-    <div className="absolute left-1/2 top-[64px] z-[478] w-[min(640px,calc(100%-20px))] -translate-x-1/2">
+    <div className="absolute left-1/2 top-[64px] z-[580] w-[min(640px,calc(100%-20px))] -translate-x-1/2">
       <div
         className={`flex items-center gap-3 rounded-sm border-2 px-4 py-2.5 ${critical ? "blink" : ""}`}
         style={{
@@ -726,18 +721,17 @@ function LocationBeaconCard() {
   }, []);
   const name = locationName(fix.lon, fix.lat);
   return (
-    <DockCard minW={196} className="border-[rgba(84,224,255,0.4)]">
-      <div className="hud-label flex items-center gap-1.5">
-        <span className="relative flex h-2 w-2">
+    <div>
+      <div className="font-display flex items-center gap-1.5 text-[13px] leading-tight text-[var(--hud-cyan)] hud-glow-cyan">
+        <span className="relative flex h-2 w-2 shrink-0">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--hud-cyan)] opacity-70" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--hud-cyan)]" />
         </span>
-        location · live beacon
+        {name}
       </div>
-      <div className="font-display mt-1 text-[13px] leading-tight text-[var(--hud-cyan)] hud-glow-cyan">{name}</div>
       <div className="mt-1 text-[11px] text-[var(--hud-text)]">{fmtLonLat(fix.lon, fix.lat)}</div>
       <div className="hud-label mt-0.5">elev {fix.elev.toFixed(0)} m · auto-identified</div>
-    </DockCard>
+    </div>
   );
 }
 
@@ -748,9 +742,8 @@ function CommsDockCard({ onOpen }: { onOpen: () => void }) {
   const last = comms.messages[comms.messages.length - 1];
   const statusColor = comms.status === "ONLINE" ? "var(--hud-green)" : comms.status === "DEGRADED" ? "var(--hud-amber)" : "var(--hud-red)";
   return (
-    <DockCard minW={178}>
-      <div className="hud-label flex items-center gap-1"><Radio className="h-3 w-3" /> comms link</div>
-      <div className="mt-1 flex items-center justify-between gap-2">
+    <div>
+      <div className="mt-0.5 flex items-center justify-between gap-2">
         <span className="font-display text-[12px]" style={{ color: statusColor }}>● {comms.status}</span>
         <SignalBars signal={comms.signal} />
       </div>
@@ -764,7 +757,7 @@ function CommsDockCard({ onOpen }: { onOpen: () => void }) {
       <button className="hud-btn mt-1.5 !min-h-0 w-full !justify-center !py-1.5" onClick={onOpen} title="Open the comms console">
         <Radio className="h-3.5 w-3.5" /> open comms
       </button>
-    </DockCard>
+    </div>
   );
 }
 
@@ -774,9 +767,8 @@ function EvaDockCard({ r }: { r: WalkReadout }) {
   const o2 = r.o2Pct;
   const color = o2 <= 20 ? "var(--hud-red)" : o2 <= 50 ? "var(--hud-amber)" : "var(--hud-green)";
   return (
-    <DockCard minW={174}>
-      <div className="hud-label flex items-center gap-1"><Activity className="h-3 w-3" /> eva telemetry</div>
-      <div className="mt-1 flex items-baseline justify-between gap-2">
+    <div>
+      <div className="mt-0.5 flex items-baseline justify-between gap-2">
         <span className="hud-label">o₂ supply</span>
         <span className="font-display text-[14px]" style={{ color }}>{o2.toFixed(0)}%</span>
       </div>
@@ -788,7 +780,7 @@ function EvaDockCard({ r }: { r: WalkReadout }) {
         <Row label="elapsed" value={fmtClock(r.elapsedH)} />
         <Row label="dose" value={`${r.doseMsv.toFixed(3)} mSv`} color="var(--hud-amber)" />
       </div>
-    </DockCard>
+    </div>
   );
 }
 
@@ -799,15 +791,14 @@ function BioDockCard({ r }: { r: WalkReadout }) {
   const coreC = 36.9 + exertion * 0.9;
   const met = (1.6 + exertion * 5.4).toFixed(1);
   return (
-    <DockCard minW={172}>
-      <div className="hud-label flex items-center gap-1"><HeartPulse className="h-3 w-3" /> biometrics</div>
+    <div>
       <HeartSpark />
       <div className="mt-1 space-y-0.5">
         <Row label="core temp" value={`${coreC.toFixed(1)} °C`} color={coreC > 37.6 ? "var(--hud-amber)" : "var(--hud-green)"} />
         <Row label="suit pressure" value="4.3 psi" />
         <Row label="work rate" value={`${met} MET`} color={Number(met) > 5 ? "var(--hud-amber)" : "var(--hud-cyan)"} />
       </div>
-    </DockCard>
+    </div>
   );
 }
 
@@ -819,9 +810,8 @@ function RadDockCard({ r }: { r: WalkReadout }) {
   const state = sw?.marsSurface.evaState ?? "…";
   const hot = hzFactor > 1 || state === "SPE_POSTPONE";
   return (
-    <DockCard minW={166} className={hot ? "border-[rgba(248,113,113,0.55)]" : ""}>
-      <div className="hud-label flex items-center gap-1"><Zap className="h-3 w-3" /> radiation</div>
-      <div className="mt-1 flex items-baseline justify-between gap-2">
+    <div>
+      <div className="mt-0.5 flex items-baseline justify-between gap-2">
         <span className="hud-label">dose rate</span>
         <span className="font-display text-[14px]" style={{ color: hot ? "var(--hud-red)" : "var(--hud-cyan)" }}>{rateUsvH.toFixed(1)} <span className="text-[9px]">µSv/h</span></span>
       </div>
@@ -831,29 +821,28 @@ function RadDockCard({ r }: { r: WalkReadout }) {
         <Row label="shielding" value="suit · 0.4 g/cm²" color="var(--hud-dim)" />
       </div>
       {hot && <div className="mt-1 rounded-sm border border-[rgba(248,113,113,0.5)] px-1.5 py-1 text-[9px] leading-snug text-[var(--hud-red)]">ELEVATED FLUX — shelter advised</div>}
-    </DockCard>
+    </div>
   );
 }
 
 function TerrainDockCard({ r }: { r: WalkReadout }) {
   const slopeColor = r.slope > 10 ? "var(--hud-red)" : r.slope > 6 ? "var(--hud-amber)" : "var(--hud-green)";
   return (
-    <DockCard minW={152}>
-      <div className="hud-label flex items-center gap-1"><Gauge className="h-3 w-3" /> terrain</div>
-      <div className="mt-1 space-y-0.5">
+    <div>
+      <div className="mt-0.5 space-y-0.5">
         <Row label="elev" value={r.elev !== null ? `${Math.round(r.elev)} m` : "…"} />
         <Row label="slope" value={`${r.slope.toFixed(1)}°`} color={slopeColor} />
         <Row label="speed" value={`${r.speedEff.toFixed(1)} km/h`} color="var(--hud-amber)" />
         <Row label="sun" value={`${r.sunElev.toFixed(0)}°`} />
         <Row label="air" value={`${airTempC(r.lstNow).toFixed(0)}°C`} />
       </div>
-    </DockCard>
+    </div>
   );
 }
 
 /* ---------------- F5: interactive control cluster ---------------- */
 
-function ControlCluster({ onPrefs, playing, manual, speedMult, finished, drillOpen, onToggleDrill }: {
+function ControlClusterBody({ onPrefs, playing, manual, speedMult, finished, drillOpen, onToggleDrill, libOpen, onToggleLib }: {
   onPrefs: () => void;
   playing: boolean;
   manual: boolean;
@@ -861,6 +850,8 @@ function ControlCluster({ onPrefs, playing, manual, speedMult, finished, drillOp
   finished: boolean;
   drillOpen: boolean;
   onToggleDrill: () => void;
+  libOpen: boolean;
+  onToggleLib: () => void;
 }) {
   const setWalkManual = useStore((s) => s.setWalkManual);
   const setWalkPlaying = useStore((s) => s.setWalkPlaying);
@@ -874,9 +865,8 @@ function ControlCluster({ onPrefs, playing, manual, speedMult, finished, drillOp
   const hazard = useStore((s) => s.hazard);
   const dockBtn = "hud-btn !min-h-0 !flex-col !gap-0.5 !px-1 !py-1.5 text-[8px] leading-none";
   return (
-    <DockCard minW={214} className="order-first border-[var(--hud-border)] 2xl:order-none">
-      <div className="hud-label flex items-center gap-1"><Settings2 className="h-3 w-3" /> control panel</div>
-      <div className="mt-1.5 grid grid-cols-5 gap-1">
+    <div>
+      <div className="mt-0.5 grid grid-cols-5 gap-1">
         <button className={`${dockBtn} ${manual ? "active" : ""}`} onClick={() => setWalkManual(!manual)} disabled={finished} title={manual ? "Return to auto-traverse (route-synced)" : "Take manual foot control (WASD / D-pad · SHIFT lope)"}>
           <Footprints className="h-4 w-4" />{manual ? "auto" : "foot"}
         </button>
@@ -905,8 +895,15 @@ function ControlCluster({ onPrefs, playing, manual, speedMult, finished, drillOp
         </button>
       </div>
       <div className="mt-1 grid grid-cols-3 gap-1">
+        <button
+          className={`${dockBtn} ${libOpen ? "active" : ""}`}
+          onClick={onToggleLib}
+          title="Panel library — add, remove, stack or reset the HUD panels"
+        >
+          <Layers className="h-4 w-4" />panels
+        </button>
         <button className={dockBtn} onClick={onPrefs} title="Visor display preferences">
-          <Gauge className="h-4 w-4" />prefs
+          <Settings2 className="h-4 w-4" />prefs
         </button>
         <button
           className={`${dockBtn} ${drillOpen || hazard ? "active !border-[rgba(255,95,143,0.65)] !text-[#ff9db9]" : ""}`}
@@ -915,9 +912,8 @@ function ControlCluster({ onPrefs, playing, manual, speedMult, finished, drillOp
         >
           <AlertTriangle className="h-4 w-4" />{hazard ? "drill!" : "drill"}
         </button>
-        <span />
       </div>
-    </DockCard>
+    </div>
   );
 }
 
@@ -928,7 +924,7 @@ function HazardDrillMenu({ onClose }: { onClose: () => void }) {
   const triggerHazard = useStore((s) => s.triggerHazard);
   const clearHazard = useStore((s) => s.clearHazard);
   return (
-    <div className="pointer-events-auto absolute bottom-[calc(286px*var(--hud-zoom,1)_+_env(safe-area-inset-bottom))] left-2 z-[500] w-[340px] max-w-[calc(100vw-24px)] md:left-3">
+    <div className="pointer-events-auto absolute bottom-[calc(16px_+_env(safe-area-inset-bottom))] left-2 z-[560] w-[340px] max-w-[calc(100vw-24px)] md:left-3">
       <div className="hud-panel max-h-[calc(100dvh-310px)] overflow-y-auto rounded-sm p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <span className="font-display flex items-center gap-1.5 text-[12px] tracking-[0.18em] text-[#ff9db9]">
@@ -974,6 +970,212 @@ function HazardDrillMenu({ onClose }: { onClose: () => void }) {
   );
 }
 
+/* ---------------- floating HUD panel chrome (drag / resize / close) ---------------- */
+
+/** real px → local px divisor (--hud-zoom on the visor root) */
+function hudZoom(): number {
+  if (typeof window === "undefined") return 1;
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hud-zoom"));
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
+
+const PANEL_MARGIN = 8;
+const PANEL_SNAP = 14; // edge magnet while dragging
+
+/** visor surface bounds in local units — panels live inside the zoomed `.visor-solid` root */
+function visorBounds(): { vw: number; vh: number; z: number } {
+  const z = hudZoom();
+  const root = document.querySelector<HTMLElement>(".visor-solid");
+  if (root) {
+    const r = root.getBoundingClientRect();
+    return { vw: r.width / z, vh: r.height / z, z };
+  }
+  return { vw: window.innerWidth / z, vh: window.innerHeight / z, z };
+}
+
+/**
+ * A movable visor HUD window. Drag the header to move (viewport edges snap),
+ * drag the corner to resize, chevron to collapse to the title bar, X to close
+ * (re-add from the panel library). Any pointer-down raises it to the top of
+ * the stack. Coordinates are local px inside the zoomed visor root.
+ */
+function FloatingPanel({
+  id,
+  children,
+  panelClassName = "",
+}: {
+  id: HudPanelId;
+  children: React.ReactNode;
+  /** extra classes for the inner hud-panel frame (border accents) */
+  panelClassName?: string;
+}) {
+  const st = useStore((s) => s.hudPanels[id]);
+  const setHudPanelRect = useStore((s) => s.setHudPanelRect);
+  const focusHudPanel = useStore((s) => s.focusHudPanel);
+  const toggleHudPanel = useStore((s) => s.toggleHudPanel);
+  const collapseHudPanel = useStore((s) => s.collapseHudPanel);
+  const [active, setActive] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const def = hudPanelDef(id);
+
+  if (!st.open) return null;
+
+  const beginDrag = (e: React.PointerEvent, mode: "move" | "resize") => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    focusHudPanel(id);
+    const { vw, vh, z } = visorBounds();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origX = st.x;
+    const origY = st.y;
+    const origW = st.w;
+    const el = rootRef.current;
+    const origH = st.h ?? (el ? el.getBoundingClientRect().height / z : def.estH);
+    setActive(true);
+    const move = (ev: PointerEvent) => {
+      const dx = (ev.clientX - startX) / z;
+      const dy = (ev.clientY - startY) / z;
+      if (mode === "move") {
+        let nx = origX + dx;
+        let ny = origY + dy;
+        // magnetic viewport edges
+        if (Math.abs(nx - PANEL_MARGIN) < PANEL_SNAP) nx = PANEL_MARGIN;
+        if (Math.abs(vw - nx - origW) < PANEL_SNAP) nx = vw - origW - PANEL_MARGIN;
+        if (Math.abs(ny - PANEL_MARGIN) < PANEL_SNAP) ny = PANEL_MARGIN;
+        setHudPanelRect(id, { x: nx, y: ny });
+      } else {
+        setHudPanelRect(id, {
+          w: Math.min(origW + dx, vw - origX - PANEL_MARGIN),
+          h: Math.min(origH + dy, vh - origY - PANEL_MARGIN),
+        });
+      }
+    };
+    const up = () => {
+      setActive(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      className="pointer-events-auto absolute"
+      style={{
+        left: st.x,
+        top: st.y,
+        width: st.w,
+        height: st.h !== null && !st.collapsed ? st.h : undefined,
+        zIndex: 486 + st.z,
+      }}
+      onPointerDown={() => focusHudPanel(id)}
+    >
+      <div
+        className={`hud-panel flex h-full flex-col rounded-sm transition-shadow ${panelClassName} ${
+          active ? "!border-[rgba(84,224,255,0.65)] shadow-[0_0_20px_rgba(84,224,255,0.3)]" : ""
+        }`}
+      >
+        <div
+          className="flex cursor-grab touch-none select-none items-center justify-between gap-1 border-b border-[var(--hud-border-dim)] px-1.5 py-1 active:cursor-grabbing"
+          onPointerDown={(e) => beginDrag(e, "move")}
+          title="Drag to move — edges snap · double-click to collapse"
+          onDoubleClick={() => collapseHudPanel(id, !st.collapsed)}
+        >
+          <span className="hud-label flex min-w-0 items-center gap-1 !text-[9px]">
+            <GripVertical className="h-3 w-3 shrink-0 opacity-45" />
+            <span className="truncate tracking-[0.16em]">{def.label.toUpperCase()}</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-0.5">
+            <button
+              className="rounded-sm p-0.5 text-[var(--hud-dim)] hover:text-[var(--hud-amber)]"
+              onClick={() => collapseHudPanel(id, !st.collapsed)}
+              aria-label={st.collapsed ? `Expand ${def.label}` : `Collapse ${def.label}`}
+            >
+              {st.collapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+            </button>
+            <button
+              className="rounded-sm p-0.5 text-[var(--hud-dim)] hover:text-[var(--hud-red)]"
+              onClick={() => toggleHudPanel(id, false)}
+              aria-label={`Close ${def.label}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+        {!st.collapsed && (
+          <div className={`min-h-0 flex-1 overflow-y-auto px-2.5 py-2 ${st.h !== null ? "" : "overflow-y-visible"}`}>{children}</div>
+      )}
+        {def.resizable && !st.collapsed && (
+          <div
+            className="absolute bottom-0 right-0 z-10 h-4 w-4 cursor-nwse-resize touch-none"
+            onPointerDown={(e) => beginDrag(e, "resize")}
+            title="Drag to resize"
+            aria-label={`Resize ${def.label}`}
+          >
+            <svg viewBox="0 0 16 16" className="h-full w-full text-[var(--hud-dim)]">
+              <path d="M15 6 L6 15 M15 10 L10 15" stroke="currentColor" strokeWidth="1.2" fill="none" />
+            </svg>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** panel library — re-open closed panels, tidy the stack, reset the layout */
+function PanelLibrary({ onClose }: { onClose: () => void }) {
+  const hudPanels = useStore((s) => s.hudPanels);
+  const toggleHudPanel = useStore((s) => s.toggleHudPanel);
+  const stackHudPanels = useStore((s) => s.stackHudPanels);
+  const resetHudPanels = useStore((s) => s.resetHudPanels);
+  return (
+    <div className="pointer-events-auto absolute bottom-[calc(16px_+_env(safe-area-inset-bottom))] left-2 z-[570] w-[268px] md:left-3">
+      <div className="hud-panel max-h-[min(420px,calc(100dvh-40px))] overflow-y-auto rounded-sm p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="font-display flex items-center gap-1.5 text-[12px] tracking-[0.18em] text-[var(--hud-cyan)]">
+            <Layers className="h-3.5 w-3.5" /> PANEL LIBRARY
+          </span>
+          <button className="text-[var(--hud-dim)] hover:text-[var(--hud-amber)]" onClick={onClose} aria-label="Close panel library">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <p className="mb-2 text-[9px] leading-snug text-[var(--hud-dim)]">
+          Drag panels by their title bar · resize from the corner · stack any way you like.
+        </p>
+        <div className="space-y-1.5">
+          {HUD_PANELS.map((d) => (
+            <div key={d.id} className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[11px] text-[var(--hud-text)]">{d.label}</div>
+                <div className="hud-label truncate">{d.hint}</div>
+              </div>
+              <Switch
+                checked={hudPanels[d.id].open}
+                onCheckedChange={(v) => toggleHudPanel(d.id, v)}
+                aria-label={`${hudPanels[d.id].open ? "Remove" : "Add"} ${d.label}`}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="mt-2.5 grid grid-cols-2 gap-1.5">
+          <button className="hud-btn !min-h-0 !justify-center !py-1.5 !text-[10px]" onClick={() => stackHudPanels()} title="Re-stack every open panel into tidy edge columns">
+            <Layers className="h-3.5 w-3.5" /> stack all
+          </button>
+          <button className="hud-btn !min-h-0 !justify-center !py-1.5 !text-[10px]" onClick={() => resetHudPanels()} title="Reset positions and sizes to the default layout">
+            <RotateCcw className="h-3.5 w-3.5" /> reset layout
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void }) {
   const r = useStore((s) => s.walk.readout);
   const route = useStore((s) => s.route);
@@ -982,6 +1184,7 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
   const manual = useStore((s) => s.walk.manual);
   const hazard = useStore((s) => s.hazard);
   const [drillOpen, setDrillOpen] = useState(false);
+  const [libOpen, setLibOpen] = useState(false);
   if (!r) return null;
   const nextWp = route[Math.min(r.nextIdx, route.length - 1)];
   const etaH = r.speedEff > 0.05 ? r.nextDistM / 1000 / r.speedEff : 0;
@@ -1037,7 +1240,7 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
 
       {/* ---- science-stop dwell card ---- */}
       {r.dwellH > 0 && dwellWp && (
-        <div className="pointer-events-auto absolute left-1/2 top-1/2 z-[480] -translate-x-1/2 -translate-y-1/2">
+        <div className="pointer-events-auto absolute left-1/2 top-1/2 z-[575] -translate-x-1/2 -translate-y-1/2">
           <VisorCard className="w-[300px] border-[rgba(84,224,255,0.45)] text-center">
             <div className="hud-label">science stop in progress · {dwellWp.name}</div>
             <div className="font-display mt-1 text-lg text-[var(--hud-cyan)] hud-glow-cyan">{POIS.find((p) => p.id === dwellWp.poiId)?.name ?? dwellWp.name}</div>
@@ -1058,64 +1261,62 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
       <ManualPad />
       <ControlsHint />
 
-      {/* ---- F4: bottom HUD dock — every panel below the sightline ---- */}
-      <div className="pointer-events-auto absolute inset-x-0 bottom-0 z-[476] border-t border-[var(--hud-border)] bg-[rgba(4,7,11,0.92)] backdrop-blur-md">
-        <div className="hud-scroll flex items-stretch gap-2 overflow-x-auto px-2 pb-[calc(0.45rem_+_env(safe-area-inset-bottom))] pt-1.5">
-          {/* navigation + route progress */}
-          {prefs.nav && nextWp && (
-            <DockCard minW={292} className="justify-between">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="hud-label">next waypoint</div>
-                  <div className="font-display truncate text-[14px] text-[var(--hud-amber)] hud-glow">
-                    {nextWp.name} <span className="text-[10px] font-normal text-[var(--hud-dim)]">{POIS.find((p) => p.id === nextWp.poiId)?.name ?? ""}</span>
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <div className="text-right">
-                    <div className="hud-label">range</div>
-                    <div className="font-display text-[14px] text-[var(--hud-cyan)] hud-glow-cyan">{fmtDist(r.atEnd ? 0 : r.nextDistM)}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="hud-label">eta</div>
-                    <div className="font-display text-[14px] text-[var(--hud-cyan)]">{r.atEnd ? "—" : fmtClock(etaH).slice(3)}</div>
-                  </div>
-                  <div className="flex flex-col items-center">
-                    <BearingNeedle bearing={r.bearing} />
-                    <span className="font-display text-[9px] text-[var(--hud-dim)]">{r.bearing.toFixed(0).padStart(3, "0")}° {compassPoint(r.bearing)}</span>
-                  </div>
-                </div>
+      {/* ---- F4: floating HUD panels — drag by header, resize from the corner,
+           collapse / close per panel; add · stack · reset from the library ---- */}
+      <FloatingPanel id="control">
+        <ControlClusterBody onPrefs={onPrefs} playing={walk.playing} manual={manual} speedMult={walk.speedMult} finished={!!r.atEnd} drillOpen={drillOpen} onToggleDrill={() => setDrillOpen((v) => !v)} libOpen={libOpen} onToggleLib={() => setLibOpen((v) => !v)} />
+      </FloatingPanel>
+      {nextWp && (
+        <FloatingPanel id="nav">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="hud-label">next waypoint</div>
+              <div className="font-display truncate text-[14px] text-[var(--hud-amber)] hud-glow">
+                {nextWp.name} <span className="text-[10px] font-normal text-[var(--hud-dim)]">{POIS.find((p) => p.id === nextWp.poiId)?.name ?? ""}</span>
               </div>
-              <div className="mt-2">
-                <div className="relative h-1.5 w-full overflow-visible rounded-sm bg-[rgba(255,255,255,0.08)]">
-                  {(() => {
-                    const frame = buildFrame(route);
-                    return frame.legCum.slice(1, -1).map((d, i) => (
-                      <div key={i} className="absolute top-1/2 h-2.5 w-[2px] -translate-y-1/2 bg-[rgba(84,224,255,0.55)]" style={{ left: `${(d / frame.totalM) * 100}%` }} title={route[i + 1]?.name} />
-                    ));
-                  })()}
-                  <div className="h-full rounded-sm bg-[var(--hud-orange)]" style={{ width: `${(r.distM / Math.max(r.totalM, 1)) * 100}%`, boxShadow: "0 0 8px rgba(255,122,47,0.8)" }} />
-                </div>
-                <div className="mt-1 flex justify-between text-[9px] text-[var(--hud-dim)]">
-                  <span>walked {fmtDist(r.distM)}</span>
-                  <span className="text-[var(--hud-amber)]">{manual ? "MANUAL · real-time" : `☉ sim ${walk.speedMult}× · ${eva.crew} crew`}</span>
-                  <span>remaining {fmtDist(Math.max(0, r.totalM - r.distM))}</span>
-                </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <div className="text-right">
+                <div className="hud-label">range</div>
+                <div className="font-display text-[14px] text-[var(--hud-cyan)] hud-glow-cyan">{fmtDist(r.atEnd ? 0 : r.nextDistM)}</div>
               </div>
-            </DockCard>
-          )}
-          {prefs.eva && <EvaDockCard r={r} />}
-          {prefs.bio && <BioDockCard r={r} />}
-          {prefs.terrain && <TerrainDockCard r={r} />}
-          {prefs.rad && <RadDockCard r={r} />}
-          <LocationBeaconCard />
-          {prefs.comms && <CommsDockCard onOpen={() => useStore.getState().setCommsOpen(!useStore.getState().comms.open)} />}
-          {prefs.minimap && <MiniMap size={112} />}
-          <ControlCluster onPrefs={onPrefs} playing={walk.playing} manual={manual} speedMult={walk.speedMult} finished={!!r.atEnd} drillOpen={drillOpen} onToggleDrill={() => setDrillOpen((v) => !v)} />
-        </div>
-      </div>
-      {/* hazard drill menu floats OUTSIDE the dock row — nesting it inside the
-          scrollable dock clipped its top items off-screen at short viewports */}
+              <div className="text-right">
+                <div className="hud-label">eta</div>
+                <div className="font-display text-[14px] text-[var(--hud-cyan)]">{r.atEnd ? "—" : fmtClock(etaH).slice(3)}</div>
+              </div>
+              <div className="flex flex-col items-center">
+                <BearingNeedle bearing={r.bearing} />
+                <span className="font-display text-[9px] text-[var(--hud-dim)]">{r.bearing.toFixed(0).padStart(3, "0")}° {compassPoint(r.bearing)}</span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-2">
+            <div className="relative h-1.5 w-full overflow-visible rounded-sm bg-[rgba(255,255,255,0.08)]">
+              {(() => {
+                const frame = buildFrame(route);
+                return frame.legCum.slice(1, -1).map((d, i) => (
+                  <div key={i} className="absolute top-1/2 h-2.5 w-[2px] -translate-y-1/2 bg-[rgba(84,224,255,0.55)]" style={{ left: `${(d / frame.totalM) * 100}%` }} title={route[i + 1]?.name} />
+                ));
+              })()}
+              <div className="h-full rounded-sm bg-[var(--hud-orange)]" style={{ width: `${(r.distM / Math.max(r.totalM, 1)) * 100}%`, boxShadow: "0 0 8px rgba(255,122,47,0.8)" }} />
+            </div>
+            <div className="mt-1 flex justify-between text-[9px] text-[var(--hud-dim)]">
+              <span>walked {fmtDist(r.distM)}</span>
+              <span className="text-[var(--hud-amber)]">{manual ? "MANUAL · real-time" : `☉ sim ${walk.speedMult}× · ${eva.crew} crew`}</span>
+              <span>remaining {fmtDist(Math.max(0, r.totalM - r.distM))}</span>
+            </div>
+          </div>
+        </FloatingPanel>
+      )}
+      <FloatingPanel id="eva"><EvaDockCard r={r} /></FloatingPanel>
+      <FloatingPanel id="bio"><BioDockCard r={r} /></FloatingPanel>
+      <FloatingPanel id="terrain"><TerrainDockCard r={r} /></FloatingPanel>
+      <FloatingPanel id="rad"><RadDockCard r={r} /></FloatingPanel>
+      <FloatingPanel id="location" panelClassName="border-[rgba(84,224,255,0.4)]"><LocationBeaconCard /></FloatingPanel>
+      <FloatingPanel id="comms"><CommsDockCard onOpen={() => useStore.getState().setCommsOpen(!useStore.getState().comms.open)} /></FloatingPanel>
+      <FloatingPanel id="minimap"><MiniMap /></FloatingPanel>
+      {libOpen && <PanelLibrary onClose={() => setLibOpen(false)} />}
+      {/* hazard drill menu — a dialog, floats above the panel layer */}
       {drillOpen && <HazardDrillMenu onClose={() => setDrillOpen(false)} />}
     </div>
   );
@@ -1172,7 +1373,7 @@ function ManualPad() {
   const manual = useStore((s) => s.walk.manual);
   if (finished) return null;
   return (
-    <div className="pointer-events-auto absolute bottom-[calc(274px_+_env(safe-area-inset-bottom))] left-2 z-[475] select-none md:left-3">
+    <div className="pointer-events-auto absolute bottom-[calc(16px_+_env(safe-area-inset-bottom))] left-2 z-[475] select-none md:left-3">
       {manual && (
         <div className="hud-chip mb-1 !py-0.5 !text-[9px] !text-[var(--hud-amber)]">manual · shift = dash</div>
       )}
@@ -1217,7 +1418,7 @@ function CapturePrompt() {
   }, []);
   if (!t) return null;
   return (
-    <div className="pointer-events-auto absolute left-1/2 top-[46%] z-[478] -translate-x-1/2 -translate-y-1/2">
+    <div className="pointer-events-auto absolute left-1/2 top-[46%] z-[575] -translate-x-1/2 -translate-y-1/2">
       <VisorCard className="w-[248px] border-[rgba(84,224,255,0.55)] !py-2 text-center">
         <div className="hud-label blink">◉ sample in capture range</div>
         <div className="font-display mt-0.5 text-[13px] text-[var(--hud-cyan)] hud-glow-cyan">
@@ -1236,7 +1437,7 @@ function SampleTray() {
   const collected = useStore((s) => s.collected);
   if (collected.length === 0) return null;
   return (
-    <div className="pointer-events-none absolute left-2 top-3 z-[474] md:left-3">
+    <div className="pointer-events-none absolute left-2 top-3 z-[575] md:left-3">
       <div className="hud-panel rounded-sm px-2 py-1.5">
         <div className="hud-label flex items-center gap-1">
           <FlaskConical className="h-3 w-3" /> sample tray · {collected.length}/12
@@ -1268,7 +1469,7 @@ function ControlsHint() {
   }, []);
   if (gone) return null;
   return (
-    <div className="pointer-events-none absolute bottom-[302px] left-1/2 z-[473] -translate-x-1/2">
+    <div className="pointer-events-none absolute bottom-[70px] left-1/2 z-[473] -translate-x-1/2">
       <span className="hud-chip !text-[var(--hud-cyan)]">W A S D walk · SHIFT dash · E collect sample · drag to look</span>
     </div>
   );
@@ -1279,10 +1480,13 @@ function ControlsHint() {
 function StandbyHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void }) {
   const route = useStore((s) => s.route);
   const site = useStore((s) => s.site);
+  const hudPanels = useStore((s) => s.hudPanels);
   const openPanel = useStore((s) => s.openPanel);
   const setVisorMode = useStore((s) => s.setVisorMode);
   const canWalk = route.length >= 2;
-  const blocksOn = ([prefs.nav && "NAV", prefs.eva && "EVA", prefs.bio && "BIO", prefs.rad && "RAD", prefs.terrain && "TERRAIN", prefs.comms && "COMMS", prefs.hazards && "HAZARD", prefs.profile && "PROFILE", prefs.compass && "COMPASS", prefs.minimap && "MAP", prefs.shadows && "SHADOWS"] as (string | false)[]).filter((b): b is string => !!b);
+  const panelChips = HUD_PANELS.filter((d) => hudPanels[d.id].open).map((d) => d.label.split(" ")[0].toUpperCase());
+  const overlayChips = ([prefs.hazards && "HAZARD", prefs.profile && "PROFILE", prefs.compass && "COMPASS", prefs.reticle && "RETICLE", prefs.helmet && "HELMET", prefs.shadows && "SHADOWS"] as (string | false)[]).filter((b): b is string => !!b);
+  const blocksOn = [...panelChips, ...overlayChips];
   return (
     <div className="pointer-events-none absolute inset-0 z-[470] flex items-center justify-center select-none visor-solid" style={{ zoom: "var(--hud-zoom, 1)" }}>
       <div className="pointer-events-auto w-[min(430px,calc(100%-32px))]">
@@ -1323,19 +1527,13 @@ function StandbyHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void
 
 /* ================= preferences popover ================= */
 
-const PREF_META: { key: keyof VisorPrefs; label: string; hint: string }[] = [
-  { key: "nav", label: "Navigation tape", hint: "next WP · range · bearing · ETA · progress" },
-  { key: "eva", label: "EVA telemetry", hint: "O₂ bar · dose · LST clock · elapsed" },
-  { key: "bio", label: "Biometrics", hint: "heart · core temp · suit pressure · work rate" },
-  { key: "rad", label: "Radiation", hint: "live dose rate · cumulative · space-wx state" },
-  { key: "terrain", label: "Terrain underfoot", hint: "elevation · slope · speed · sun" },
-  { key: "comms", label: "Comms relay", hint: "Earth light-time · space weather" },
+/** overlay elements — not panels: fixed HUD features toggled here */
+const OVERLAY_META: { key: keyof VisorPrefs; label: string; hint: string }[] = [
   { key: "hazards", label: "Hazard alerts", hint: "steep terrain · O₂ turnaround · low sun" },
   { key: "profile", label: "Traverse profile", hint: "mini DEM profile with walker dot" },
   { key: "helmet", label: "Helmet mask", hint: "curved visor frame overlay" },
   { key: "reticle", label: "Center reticle", hint: "crosshair at visor center" },
   { key: "compass", label: "Heading tape", hint: "live compass · waypoint + shelter bearing bugs" },
-  { key: "minimap", label: "Traverse mini-map", hint: "top-down route · walker · view cone" },
   { key: "shadows", label: "Sun shadows", hint: "dynamic shadow maps — terrain · rocks · lander" },
 ];
 
@@ -1343,11 +1541,14 @@ function VisorPrefsPanel({ open, onClose }: { open: boolean; onClose: () => void
   const prefs = useStore((s) => s.visorPrefs);
   const setVisorPref = useStore((s) => s.setVisorPref);
   const setVisorDensity = useStore((s) => s.setVisorDensity);
-  const matchesDensity = (d: "minimal" | "standard" | "full") => PREF_META.every((m) => VISOR_PRESET[d][m.key] === prefs[m.key]);
+  const hudPanels = useStore((s) => s.hudPanels);
+  const toggleHudPanel = useStore((s) => s.toggleHudPanel);
+  const stackHudPanels = useStore((s) => s.stackHudPanels);
+  const matchesDensity = (d: "minimal" | "standard" | "full") => OVERLAY_META.every((m) => VISOR_PRESET[d][m.key] === prefs[m.key]);
   if (!open) return null;
   return (
-    <div className="pointer-events-auto absolute bottom-[calc(286px*var(--hud-zoom,1)_+_env(safe-area-inset-bottom))] right-2 z-[500] w-[290px] md:right-3">
-      <div className="hud-panel rounded-sm p-3">
+    <div className="pointer-events-auto absolute bottom-[calc(16px_+_env(safe-area-inset-bottom))] right-2 z-[560] w-[290px] md:right-3">
+      <div className="hud-panel max-h-[min(560px,calc(100dvh-40px))] overflow-y-auto rounded-sm p-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="font-display text-[12px] tracking-[0.18em] text-[var(--hud-amber)]">VISOR PREFS</span>
           <button className="text-[var(--hud-dim)] hover:text-[var(--hud-amber)]" onClick={onClose} aria-label="Close visor preferences"><X className="h-3.5 w-3.5" /></button>
@@ -1359,8 +1560,24 @@ function VisorPrefsPanel({ open, onClose }: { open: boolean; onClose: () => void
             </button>
           ))}
         </div>
+        <div className="hud-label mb-1 flex items-center justify-between">
+          <span>hud panels — movable windows</span>
+          <button className="!text-[9px] text-[var(--hud-cyan)] hover:underline" onClick={() => stackHudPanels()}>stack all</button>
+        </div>
+        <div className="space-y-1.5">
+          {HUD_PANELS.map((d) => (
+            <div key={d.id} className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[11px] text-[var(--hud-text)]">{d.label}</div>
+                <div className="hud-label truncate">{d.hint}</div>
+              </div>
+              <Switch checked={hudPanels[d.id].open} onCheckedChange={(v) => toggleHudPanel(d.id, v)} aria-label={d.label} />
+            </div>
+          ))}
+        </div>
+        <div className="hud-label mb-1 mt-3">overlay elements</div>
         <div className="space-y-2">
-          {PREF_META.map((m) => (
+          {OVERLAY_META.map((m) => (
             <div key={m.key} className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-[11px] text-[var(--hud-text)]">{m.label}</div>
@@ -1370,7 +1587,7 @@ function VisorPrefsPanel({ open, onClose }: { open: boolean; onClose: () => void
             </div>
           ))}
         </div>
-        <p className="mt-2 text-[9px] text-[var(--hud-dim)]">Saved to your mission file · applies live</p>
+        <p className="mt-2 text-[9px] text-[var(--hud-dim)]">Drag panels by the title bar · resize from the corner · layout saved to your mission file</p>
       </div>
     </div>
   );
