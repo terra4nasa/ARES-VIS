@@ -8,7 +8,7 @@
  *  - VisorPrefs: per-block display preferences (persisted per user)
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Play, Pause, FastForward, X, Settings2, Footprints, SkipForward, Mountain, Gauge, Radio, ShieldAlert, Activity, FlaskConical, Zap, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Hand, MapPin } from "lucide-react";
+import { Play, Pause, FastForward, X, Settings2, Footprints, SkipForward, Mountain, Gauge, Radio, ShieldAlert, Activity, FlaskConical, Zap, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Hand, MapPin, HeartPulse, AlertTriangle } from "lucide-react";
 import { useStore, type VisorPrefs, VISOR_PRESET } from "@/lib/store";
 import { useRouteProfile, useSpaceWeather } from "@/lib/hooks";
 import { FirstPersonTerrain } from "@/components/hud/FirstPerson";
@@ -17,6 +17,7 @@ import { camBus, walkInput, requestSampleCollect } from "@/lib/fpv3d";
 import { POIS } from "@/lib/data";
 import { buildFrame, walkReadout, manualReadout, projectOntoRoute, fmtClock, type WalkReadout } from "@/lib/walk";
 import { fmtDist, fmtLonLat, compassPoint, haversineKm } from "@/lib/mars";
+import { bestBaseFor, HAZARDS } from "@/lib/hazards";
 import { locationName } from "@/lib/sites";
 import { fmtLst } from "@/lib/eva";
 import { Switch } from "@/components/ui/switch";
@@ -39,21 +40,33 @@ function WalkEngine() {
   const sim = useRef({ distM: 0, elapsedH: 0, dwellH: 0, dwelled: new Set<number>(), warnedSteep: -1, o2Band: 0, manualDistM: 0 });
   const rafRef = useRef<number>(0);
   const lastRef = useRef(0);
-  const accRef = useRef(1); // publish accumulator (s)
+  const accRef = useRef(1); // physics accumulator (s) — runs at ~12 Hz
+  const pubAccRef = useRef(1); // readout emit accumulator (s) — throttled to ~3.5 Hz to keep the HUD calm
   const lastJumpRef = useRef(0);
   const lastSkipRef = useRef(0);
   const manualRef = useRef(false);
   const finishedManualRef = useRef(false);
   const lastOffRouteRef = useRef(0);
+  const lastHazardAdviceRef = useRef(0);
 
   const resetSim = useCallback(() => {
     sim.current = { distM: 0, elapsedH: 0, dwellH: 0, dwelled: new Set<number>(), warnedSteep: -1, o2Band: 0, manualDistM: 0 };
     lastRef.current = performance.now();
   }, []);
 
-  const publish = useCallback((dtRealS: number) => {
+  /** hazard-adjusted model params — leak drills burn O₂ faster, SPE multiplies dose */
+  const hazardAdj = useCallback(() => {
     const s = useStore.getState();
-    const { route, eva, walk } = s;
+    const hz = s.hazard?.def;
+    return {
+      eva: hz && hz.o2Factor !== 1 ? { ...s.eva, suitHours: s.eva.suitHours / hz.o2Factor } : s.eva,
+      doseFactor: hz?.doseFactor ?? 1,
+    };
+  }, []);
+
+  const physics = useCallback((dtRealS: number) => {
+    const s = useStore.getState();
+    const { route, walk } = s;
     if (route.length < 2) return;
     const frame = buildFrame(route);
     const st = sim.current;
@@ -93,6 +106,7 @@ function WalkEngine() {
         useStore.getState().setWalkPlaying(false);
       }
     } else if (walk.playing && !walkReadoutDone(walk.readout)) {
+      const adj = hazardAdj();
       st.elapsedH += simH;
       if (st.dwellH > 0) {
         st.dwellH = Math.max(0, st.dwellH - simH);
@@ -102,7 +116,7 @@ function WalkEngine() {
         }
       } else {
         // slope at current position → effective speed → advance
-        const cur = walkReadout({ route, frame, profile: profileRef.current, eva, gcrDosePerSol: swRef.current?.marsSurface.gcrDosePerSol ?? 0.7, distM: st.distM, elapsedH: st.elapsedH, dwellH: 0 });
+        const cur = walkReadout({ route, frame, profile: profileRef.current, eva: adj.eva, gcrDosePerSol: (swRef.current?.marsSurface.gcrDosePerSol ?? 0.7) * adj.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: 0 });
         const mPerS = (cur.speedEff * 1000) / 3600;
         st.distM = Math.min(frame.totalM, st.distM + mPerS * dtRealS * walk.speedMult);
       }
@@ -129,7 +143,8 @@ function WalkEngine() {
       }
 
       /* hazard + O₂ advisories (once per threshold band) */
-      const r = walkReadout({ route, frame, profile: profileRef.current, eva, gcrDosePerSol: swRef.current?.marsSurface.gcrDosePerSol ?? 0.7, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH });
+      const adj2 = hazardAdj();
+      const r = walkReadout({ route, frame, profile: profileRef.current, eva: adj2.eva, gcrDosePerSol: (swRef.current?.marsSurface.gcrDosePerSol ?? 0.7) * adj2.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH });
       if (r.slope > 10 && r.legIdx !== st.warnedSteep) {
         st.warnedSteep = r.legIdx;
         s.pushWalkEvent(`STEEP TERRAIN ${r.slope.toFixed(0)}° · SPEED ${r.speedEff.toFixed(1)} KM/H`, "warn");
@@ -142,12 +157,39 @@ function WalkEngine() {
       }
     }
 
+    /* hazard drill — periodic Mission Control shelter reminders (~30 s) */
+    const hz = s.hazard;
+    if (hz && Date.now() - lastHazardAdviceRef.current > 30000) {
+      lastHazardAdviceRef.current = Date.now();
+      const posLon = camBus.manual ? camBus.lon : (walk.readout?.lon ?? camBus.lon);
+      const posLat = camBus.manual ? camBus.lat : (walk.readout?.lat ?? camBus.lat);
+      const adj3 = hazardAdj();
+      const cur = manualOn
+        ? { speedEff: camBus.speedMs * 3.6 }
+        : walkReadout({ route, frame, profile: profileRef.current, eva: adj3.eva, gcrDosePerSol: 0, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH });
+      const rec = bestBaseFor(hz.def, posLon, posLat, route, cur.speedEff);
+      if (rec) {
+        const burn = hz.def.o2Factor !== 1 ? ` O₂ burn ×${hz.def.o2Factor} — ${(100 / Math.max(s.eva.suitHours / hz.def.o2Factor, 0.1)).toFixed(1)} %/h.` : "";
+        s.pushComms("mission", `DRILL REMINDER — ${hz.def.label.toUpperCase()} active. Shelter ${rec.name}: ${fmtDist(rec.distM)} at bearing ${rec.bearing.toFixed(0).padStart(3, "0")}°, ETA ≈ ${rec.etaMin} min.${burn} ${hz.def.rec}`, "alert");
+      }
+    }
+  }, [hazardAdj]);
+
+  /** publish the visor readout to the store — throttled (~3.5 Hz) so HUD panels
+   *  don't re-render every physics tick (that was the flicker source) */
+  const emit = useCallback(() => {
+    const s = useStore.getState();
+    const { route, eva, walk } = s;
+    if (route.length < 2 || !walk.active) return;
+    const frame = buildFrame(route);
+    const st = sim.current;
     const gcr = swRef.current?.marsSurface.gcrDosePerSol ?? 0.7;
-    const r = manualOn
+    const adj = hazardAdj();
+    const r = manualRef.current
       ? manualReadout({
           route,
-          eva,
-          gcrDosePerSol: gcr,
+          eva: adj.eva,
+          gcrDosePerSol: gcr * adj.doseFactor,
           elapsedH: st.elapsedH,
           lon: camBus.lon,
           lat: camBus.lat,
@@ -156,9 +198,9 @@ function WalkEngine() {
           speedMs: camBus.speedMs,
           walkedM: st.manualDistM,
         })
-      : walkReadout({ route, frame, profile: profileRef.current, eva, gcrDosePerSol: gcr, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH });
+      : walkReadout({ route, frame, profile: profileRef.current, eva: adj.eva, gcrDosePerSol: gcr * adj.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH });
     s.setWalkReadout(r);
-  }, []);
+  }, [hazardAdj]);
 
   /* reset when a new walk starts (readout null ⇒ fresh) */
   useEffect(() => {
@@ -166,28 +208,34 @@ function WalkEngine() {
       const st = useStore.getState().walk;
       if (!st.readout) {
         resetSim();
-        publish(0);
+        physics(0);
+        emit();
       }
     }
-  }, [active, publish, resetSim]);
+  }, [active, physics, emit, resetSim]);
 
-  /* RAF loop */
+  /* RAF loop — physics at ~12 Hz, readout emit throttled to ~3.5 Hz (flicker fix) */
   useEffect(() => {
     if (!active) return;
     const loop = (now: number) => {
       const dt = Math.min(0.1, (now - lastRef.current) / 1000);
       lastRef.current = now;
       accRef.current += dt;
+      pubAccRef.current += dt;
       if (accRef.current >= 0.08) {
-        publish(accRef.current);
+        physics(accRef.current);
         accRef.current = 0;
+      }
+      if (pubAccRef.current >= 0.28) {
+        emit();
+        pubAccRef.current = 0;
       }
       rafRef.current = requestAnimationFrame(loop);
     };
     lastRef.current = performance.now();
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [active, publish]);
+  }, [active, physics, emit]);
 
   /* external commands — nonce guards prevent re-fire when effect deps change identity */
   useEffect(() => {
@@ -208,8 +256,9 @@ function WalkEngine() {
     // advance exactly one waypoint: first waypoint index ahead of current position
     const nxt = frame.legCum[nextIdxFor(frame, sim.current.distM)];
     sim.current.distM = nxt;
-    publish(0);
-  }, [jumpNonce, active, publish]);
+    physics(0);
+    emit();
+  }, [jumpNonce, active, physics, emit]);
 
   return null;
 }
@@ -400,6 +449,24 @@ function CompassTape() {
         if (clipped) cx.fillRect(rel > 0 ? W - 9 : 3, 28, 6, 2.5);
         cx.globalAlpha = 1;
       }
+      /* shelter bug during hazard drills — magenta, below the waypoint bug */
+      const hz = useStore.getState().hazard;
+      if (hz) {
+        const rel = ((hz.base.bearing - yaw + 540) % 360) - 180;
+        const cl = Math.max(-span / 2, Math.min(span / 2, rel));
+        const x = xm + cl * ppd;
+        const clipped = Math.abs(rel) > span / 2;
+        cx.fillStyle = "#ff5f8f";
+        cx.globalAlpha = 0.5 + 0.5 * Math.sin(Date.now() / 260);
+        cx.beginPath();
+        cx.moveTo(x, 30);
+        cx.lineTo(x - 4, 37);
+        cx.lineTo(x + 4, 37);
+        cx.closePath();
+        cx.fill();
+        if (clipped) cx.fillRect(rel > 0 ? W - 9 : 3, 32, 6, 2.5);
+        cx.globalAlpha = 1;
+      }
       cx.strokeStyle = "#ff7a2f";
       cx.lineWidth = 1.5;
       cx.beginPath();
@@ -478,6 +545,28 @@ function MiniMap({ size = 138 }: { size?: number }) {
           cx.arc(px(wp.lon), py(wp.lat), 4 + 3 * pulse, 0, Math.PI * 2);
           cx.stroke();
         }
+      }
+      /* shelter base during hazard drills — magenta diamond + dashed bearing line */
+      const hz = st.hazard;
+      if (hz) {
+        const bx = px(hz.base.lon), by = py(hz.base.lat);
+        const ax = px(camBus.lon), ay = py(camBus.lat);
+        cx.strokeStyle = "rgba(255,95,143,0.75)";
+        cx.lineWidth = 1.2;
+        cx.setLineDash([3, 3]);
+        cx.beginPath();
+        cx.moveTo(ax, ay);
+        cx.lineTo(bx, by);
+        cx.stroke();
+        cx.setLineDash([]);
+        cx.fillStyle = "#ff5f8f";
+        cx.beginPath();
+        cx.moveTo(bx, by - 5);
+        cx.lineTo(bx + 4, by);
+        cx.lineTo(bx, by + 5);
+        cx.lineTo(bx - 4, by);
+        cx.closePath();
+        cx.fill();
       }
       const wx = px(camBus.lon), wy = py(camBus.lat);
       const yawR = (camBus.yawDeg * Math.PI) / 180;
@@ -692,14 +781,56 @@ function EvaDockCard({ r }: { r: WalkReadout }) {
         <span className="font-display text-[14px]" style={{ color }}>{o2.toFixed(0)}%</span>
       </div>
       <div className="mt-1 h-2.5 w-full overflow-hidden rounded-sm bg-[rgba(255,255,255,0.08)]">
-        <div className="h-full transition-all duration-300" style={{ width: `${Math.min(100, o2)}%`, background: color }} />
+        <div className="h-full transition-all duration-300" style={{ width: `${Math.min(100, Math.round(o2))}%`, background: color }} />
       </div>
       <div className="mt-1.5 space-y-0.5">
         <Row label="lst clock" value={fmtLst(r.lstNow)} glow />
         <Row label="elapsed" value={fmtClock(r.elapsedH)} />
         <Row label="dose" value={`${r.doseMsv.toFixed(3)} mSv`} color="var(--hud-amber)" />
       </div>
-      <div className="mt-auto pt-1"><HeartSpark /></div>
+    </DockCard>
+  );
+}
+
+/** biometrics dock — heart, core temp, suit pressure, work rate (deterministic sim) */
+function BioDockCard({ r }: { r: WalkReadout }) {
+  const exertion = Math.min(1, r.speedEff / 4.5 + r.slope / 40);
+  const bpm = 74 + exertion * 34 + Math.sin(performance.now() / 4100) * 3;
+  const coreC = 36.9 + exertion * 0.9;
+  const met = (1.6 + exertion * 5.4).toFixed(1);
+  return (
+    <DockCard minW={172}>
+      <div className="hud-label flex items-center gap-1"><HeartPulse className="h-3 w-3" /> biometrics</div>
+      <HeartSpark />
+      <div className="mt-1 space-y-0.5">
+        <Row label="core temp" value={`${coreC.toFixed(1)} °C`} color={coreC > 37.6 ? "var(--hud-amber)" : "var(--hud-green)"} />
+        <Row label="suit pressure" value="4.3 psi" />
+        <Row label="work rate" value={`${met} MET`} color={Number(met) > 5 ? "var(--hud-amber)" : "var(--hud-cyan)"} />
+      </div>
+    </DockCard>
+  );
+}
+
+/** radiation dock — live dose rate (space-weather driven), cumulative, drill boost */
+function RadDockCard({ r }: { r: WalkReadout }) {
+  const sw = useSpaceWeather();
+  const hzFactor = useStore((s) => s.hazard?.def.doseFactor ?? 1);
+  const rateUsvH = ((sw?.marsSurface.gcrDosePerSol ?? 0.7) * 1000 / 24) * hzFactor;
+  const state = sw?.marsSurface.evaState ?? "…";
+  const hot = hzFactor > 1 || state === "SPE_POSTPONE";
+  return (
+    <DockCard minW={166} className={hot ? "border-[rgba(248,113,113,0.55)]" : ""}>
+      <div className="hud-label flex items-center gap-1"><Zap className="h-3 w-3" /> radiation</div>
+      <div className="mt-1 flex items-baseline justify-between gap-2">
+        <span className="hud-label">dose rate</span>
+        <span className="font-display text-[14px]" style={{ color: hot ? "var(--hud-red)" : "var(--hud-cyan)" }}>{rateUsvH.toFixed(1)} <span className="text-[9px]">µSv/h</span></span>
+      </div>
+      <div className="mt-1.5 space-y-0.5">
+        <Row label="cumulative" value={`${r.doseMsv.toFixed(3)} mSv`} />
+        <Row label="space wx" value={state.replace("_", " ")} color={state === "NOMINAL" ? "var(--hud-green)" : hot ? "var(--hud-red)" : "var(--hud-amber)"} />
+        <Row label="shielding" value="suit · 0.4 g/cm²" color="var(--hud-dim)" />
+      </div>
+      {hot && <div className="mt-1 rounded-sm border border-[rgba(248,113,113,0.5)] px-1.5 py-1 text-[9px] leading-snug text-[var(--hud-red)]">ELEVATED FLUX — shelter advised</div>}
     </DockCard>
   );
 }
@@ -738,16 +869,18 @@ function ControlCluster({ onPrefs, playing, manual, speedMult, finished }: {
   const setCommsOpen = useStore((s) => s.setCommsOpen);
   const openPanel = useStore((s) => s.openPanel);
   const commsOpen = useStore((s) => s.comms.open);
+  const hazard = useStore((s) => s.hazard);
+  const [drillOpen, setDrillOpen] = useState(false);
   const dockBtn = "hud-btn !min-h-0 !flex-col !gap-0.5 !px-1 !py-1.5 text-[8px] leading-none";
   return (
     <DockCard minW={214} className="order-first border-[var(--hud-border)] 2xl:order-none">
       <div className="hud-label flex items-center gap-1"><Settings2 className="h-3 w-3" /> control panel</div>
       <div className="mt-1.5 grid grid-cols-5 gap-1">
-        <button className={`${dockBtn} ${manual ? "active" : ""}`} onClick={() => setWalkManual(!manual)} disabled={finished} title={manual ? "Return to auto-traverse (route-synced)" : "Take manual foot control (WASD / D-pad · SHIFT dash)"}>
+        <button className={`${dockBtn} ${manual ? "active" : ""}`} onClick={() => setWalkManual(!manual)} disabled={finished} title={manual ? "Return to auto-traverse (route-synced)" : "Take manual foot control (WASD / D-pad · SHIFT lope)"}>
           <Footprints className="h-4 w-4" />{manual ? "auto" : "foot"}
         </button>
-        <button className={dockBtn} onClick={() => cycleWalkSpeed()} disabled={manual} title="Simulation speed (sim-time multiplier)">
-          <FastForward className="h-4 w-4" />{manual ? "foot" : `${speedMult}×`}
+        <button className={dockBtn} onClick={() => cycleWalkSpeed()} disabled={manual} title={`Simulation time multiplier — astronaut ground speed stays ${useStore.getState().eva.speedKmh.toFixed(1)} km/h (slope-adjusted)`}>
+          <FastForward className="h-4 w-4" />{manual ? "foot" : `sim ×${speedMult}`}
         </button>
         <button className={dockBtn} onClick={() => jumpToNextWaypoint()} disabled={finished || manual} title="Skip to next waypoint">
           <SkipForward className="h-4 w-4" />skip
@@ -774,10 +907,70 @@ function ControlCluster({ onPrefs, playing, manual, speedMult, finished }: {
         <button className={dockBtn} onClick={onPrefs} title="Visor display preferences">
           <Gauge className="h-4 w-4" />prefs
         </button>
-        <span />
+        <button
+          className={`${dockBtn} ${drillOpen || hazard ? "active !border-[rgba(255,95,143,0.65)] !text-[#ff9db9]" : ""}`}
+          onClick={() => setDrillOpen(!drillOpen)}
+          title="Hazard drill simulator — Mission Control directs you to the best shelter"
+        >
+          <AlertTriangle className="h-4 w-4" />{hazard ? "drill!" : "drill"}
+        </button>
         <span />
       </div>
+      {drillOpen && <HazardDrillMenu onClose={() => setDrillOpen(false)} />}
     </DockCard>
+  );
+}
+
+/* ---------------- hazard drill simulator (visor side) ---------------- */
+
+function HazardDrillMenu({ onClose }: { onClose: () => void }) {
+  const hazard = useStore((s) => s.hazard);
+  const triggerHazard = useStore((s) => s.triggerHazard);
+  const clearHazard = useStore((s) => s.clearHazard);
+  return (
+    <div className="pointer-events-auto absolute bottom-[calc(286px*var(--hud-zoom,1)_+_env(safe-area-inset-bottom))] left-2 z-[500] w-[min(340px,calc(100vw-24px))] md:left-3">
+      <div className="hud-panel rounded-sm p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="font-display flex items-center gap-1.5 text-[12px] tracking-[0.18em] text-[#ff9db9]">
+            <AlertTriangle className="h-3.5 w-3.5" /> HAZARD DRILLS
+          </span>
+          <button className="text-[var(--hud-dim)] hover:text-[var(--hud-amber)]" onClick={onClose} aria-label="Close drill menu"><X className="h-3.5 w-3.5" /></button>
+        </div>
+        <p className="mb-2 text-[9px] leading-snug text-[var(--hud-dim)]">
+          Training drills — Mission Control simulates an emergency, ranks every shelter by walk time + shielding and directs you to the best one.
+        </p>
+        {hazard ? (
+          <div className="rounded-sm border border-[rgba(255,95,143,0.55)] bg-[rgba(255,95,143,0.08)] p-2">
+            <div className="font-display text-[11px] text-[#ff9db9]">● ACTIVE — {hazard.def.label.toUpperCase()}</div>
+            <div className="mt-1 text-[10px] leading-snug text-[var(--hud-text)]">
+              Shelter: <b className="text-[var(--hud-amber)]">{hazard.base.name}</b> · {fmtDist(hazard.base.distM)} · bearing {hazard.base.bearing.toFixed(0).padStart(3, "0")}° · ETA ≈ {hazard.base.etaMin} min
+            </div>
+            <button className="hud-btn mt-2 !min-h-0 w-full !py-1.5 !text-[10px]" onClick={() => clearHazard()}>
+              end drill — conditions nominal
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {HAZARDS.map((h) => (
+              <button
+                key={h.id}
+                className="flex w-full items-start justify-between gap-2 rounded-sm border border-[var(--hud-border-dim)] px-2 py-1.5 text-left transition-colors hover:border-[rgba(255,95,143,0.5)]"
+                onClick={() => triggerHazard(h.id)}
+                title={h.brief}
+              >
+                <span className="min-w-0">
+                  <span className="block text-[11px] text-[var(--hud-text)]">{h.label}</span>
+                  <span className="hud-label block truncate">{h.brief}</span>
+                </span>
+                <span className={`mt-0.5 shrink-0 font-display text-[8px] tracking-[0.15em] ${h.severity === "alert" ? "text-[var(--hud-red)]" : "text-[var(--hud-amber)]"}`}>
+                  {h.severity === "alert" ? "CRIT" : "WARN"}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -787,6 +980,7 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
   const eva = useStore((s) => s.eva);
   const walk = useStore((s) => s.walk);
   const manual = useStore((s) => s.walk.manual);
+  const hazard = useStore((s) => s.hazard);
   if (!r) return null;
   const nextWp = route[Math.min(r.nextIdx, route.length - 1)];
   const etaH = r.speedEff > 0.05 ? r.nextDistM / 1000 / r.speedEff : 0;
@@ -794,7 +988,8 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
   const o2Critical = o2 <= 20;
   const o2Low = o2 <= 50;
 
-  /* small hazard banner now covers non-O₂ advisories; O₂ gets the big banner */
+  /* small hazard banner covers terrain advisories; drills get the global banner
+   * (Alerts.tsx) + compass/minimap shelter bugs — no duplicate banner here */
   const alerts: { msg: string; level: "advise" | "critical" }[] = [];
   if (prefs.hazards) {
     if (r.slope > 10) alerts.push({ msg: `STEEP TERRAIN ${r.slope.toFixed(0)}° — REDUCED TRACTION`, level: "advise" });
@@ -814,9 +1009,9 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
   const stackTop = prefs.compass ? "top-[62px]" : "top-3";
   const hazardTop = o2Low && prefs.hazards ? "top-[178px]" : stackTop;
   return (
-    <div className="pointer-events-none absolute inset-0 z-[470] select-none">
-      {/* critical O₂: red pulsing edge vignette */}
-      {o2Critical && prefs.hazards && <div className="o2-crit-vignette" />}
+    <div className="pointer-events-none absolute inset-0 z-[470] select-none visor-solid" style={{ zoom: "var(--hud-zoom, 1)" }}>
+      {/* critical O₂ or drill: red pulsing edge vignette */}
+      {(o2Critical || hazard) && prefs.hazards && <div className="o2-crit-vignette" />}
 
       {/* ---- top center: live compass tape ---- */}
       {prefs.compass && (
@@ -909,7 +1104,9 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
             </DockCard>
           )}
           {prefs.eva && <EvaDockCard r={r} />}
+          {prefs.bio && <BioDockCard r={r} />}
           {prefs.terrain && <TerrainDockCard r={r} />}
+          {prefs.rad && <RadDockCard r={r} />}
           <LocationBeaconCard />
           {prefs.comms && <CommsDockCard onOpen={() => useStore.getState().setCommsOpen(!useStore.getState().comms.open)} />}
           {prefs.minimap && <MiniMap size={112} />}
@@ -1081,9 +1278,9 @@ function StandbyHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void
   const openPanel = useStore((s) => s.openPanel);
   const setVisorMode = useStore((s) => s.setVisorMode);
   const canWalk = route.length >= 2;
-  const blocksOn = ([prefs.nav && "NAV", prefs.eva && "EVA", prefs.terrain && "TERRAIN", prefs.comms && "COMMS", prefs.hazards && "HAZARD", prefs.profile && "PROFILE", prefs.compass && "COMPASS", prefs.minimap && "MAP", prefs.shadows && "SHADOWS"] as (string | false)[]).filter((b): b is string => !!b);
+  const blocksOn = ([prefs.nav && "NAV", prefs.eva && "EVA", prefs.bio && "BIO", prefs.rad && "RAD", prefs.terrain && "TERRAIN", prefs.comms && "COMMS", prefs.hazards && "HAZARD", prefs.profile && "PROFILE", prefs.compass && "COMPASS", prefs.minimap && "MAP", prefs.shadows && "SHADOWS"] as (string | false)[]).filter((b): b is string => !!b);
   return (
-    <div className="pointer-events-none absolute inset-0 z-[470] flex items-center justify-center select-none">
+    <div className="pointer-events-none absolute inset-0 z-[470] flex items-center justify-center select-none visor-solid" style={{ zoom: "var(--hud-zoom, 1)" }}>
       <div className="pointer-events-auto w-[min(430px,calc(100%-32px))]">
         <VisorCard className="border-[rgba(255,122,47,0.45)] text-center">
           <div className="hud-label">visor mode · hud configured</div>
@@ -1125,13 +1322,15 @@ function StandbyHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void
 const PREF_META: { key: keyof VisorPrefs; label: string; hint: string }[] = [
   { key: "nav", label: "Navigation tape", hint: "next WP · range · bearing · ETA · progress" },
   { key: "eva", label: "EVA telemetry", hint: "O₂ bar · dose · LST clock · elapsed" },
+  { key: "bio", label: "Biometrics", hint: "heart · core temp · suit pressure · work rate" },
+  { key: "rad", label: "Radiation", hint: "live dose rate · cumulative · space-wx state" },
   { key: "terrain", label: "Terrain underfoot", hint: "elevation · slope · speed · sun" },
   { key: "comms", label: "Comms relay", hint: "Earth light-time · space weather" },
   { key: "hazards", label: "Hazard alerts", hint: "steep terrain · O₂ turnaround · low sun" },
   { key: "profile", label: "Traverse profile", hint: "mini DEM profile with walker dot" },
   { key: "helmet", label: "Helmet mask", hint: "curved visor frame overlay" },
   { key: "reticle", label: "Center reticle", hint: "crosshair at visor center" },
-  { key: "compass", label: "Heading tape", hint: "live compass · waypoint bearing bug" },
+  { key: "compass", label: "Heading tape", hint: "live compass · waypoint + shelter bearing bugs" },
   { key: "minimap", label: "Traverse mini-map", hint: "top-down route · walker · view cone" },
   { key: "shadows", label: "Sun shadows", hint: "dynamic shadow maps — terrain · rocks · lander" },
 ];
@@ -1143,7 +1342,7 @@ function VisorPrefsPanel({ open, onClose }: { open: boolean; onClose: () => void
   const matchesDensity = (d: "minimal" | "standard" | "full") => PREF_META.every((m) => VISOR_PRESET[d][m.key] === prefs[m.key]);
   if (!open) return null;
   return (
-    <div className="pointer-events-auto absolute bottom-[calc(286px_+_env(safe-area-inset-bottom))] right-2 z-[500] w-[290px] md:right-3">
+    <div className="pointer-events-auto absolute bottom-[calc(286px*var(--hud-zoom,1)_+_env(safe-area-inset-bottom))] right-2 z-[500] w-[290px] md:right-3">
       <div className="hud-panel rounded-sm p-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="font-display text-[12px] tracking-[0.18em] text-[var(--hud-amber)]">VISOR PREFS</span>
@@ -1182,6 +1381,18 @@ export function VisorOverlay() {
   const dwelling = useStore((s) => (s.walk.readout?.dwellH ?? 0) > 0);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const togglePrefs = useCallback(() => setPrefsOpen((v) => !v), []);
+
+  /* HUD zoom for large monitors — drives the --hud-zoom CSS var consumed by the
+   * visor HUD (zoom) and by floating panels that must track the dock height */
+  useEffect(() => {
+    const apply = () => {
+      const z = Math.min(1.42, Math.max(1, window.innerWidth / 1650));
+      document.documentElement.style.setProperty("--hud-zoom", z.toFixed(3));
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, []);
 
   return (
     <>

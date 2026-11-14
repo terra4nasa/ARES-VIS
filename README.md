@@ -22,11 +22,23 @@ then step into a first-person **3D helmet visor** and physically walk the route.
   radiation dose accumulation and GO / NO-GO verdicts
 - **First-person 3D visor (Three.js/WebGL)** — HRSC-MOLA hybrid DEM terrain
   (200 m/px), procedural crater field, ~15 k instanced rocks, distant highland
-  ring, drifting dust, PCF **sun shadows** from the true LST sun position, and a
-  detailed **InSight lander** model
+  ring, drifting dust, PCF **sun shadows** from the true LST sun position, a
+  detailed **InSight lander** model and a **habitat complex** (pressurized dome,
+  crew modules, airlock, solar wings, comms mast, landing pad) at the base, plus
+  an **instrument cache** at every science site
+- **Hazard drill simulator** — trigger a dust storm, solar particle event, O₂
+  leak, suit tear, comms blackout or marsquake: Mission Control pops a critical
+  alert, ranks every shelter (BASE waypoints + lander fallback) by walk time
+  adjusted for shielding, and directs you to the best one while the suit models
+  respond (O₂ burn ×3 on a leak, dose ×8 during an SEP, fog closing in on a
+  storm) and the compass/minimap show a dedicated shelter bearing bug
+- **Biometrics & radiation visor panels** — heart rate, core temp, suit pressure
+  and work-rate MET live beside a real-time dose rate (µSv/h) driven by the
+  live space-weather feed; configurable per-block in visor prefs
 - **Dash-to-walk manual control** — hands-free auto-traverse *or* take the foot
   controls: `WASD` / arrow keys / on-screen D-pad, **SHIFT to dash**, drag to
-  look around; speed reacts to the local terrain gradient
+  look around; speed stays in the realistic suited-EVA range (~3.4 km/h walk,
+  ~5.6 km/h lope) and reacts to the local terrain gradient
 - **3D sample collection** — 12 beaconed science targets along the traverse;
   aim within ~26° of the reticle inside 7 m and press **[E]** (or the HUD button)
   to secure the rock into the sample tray

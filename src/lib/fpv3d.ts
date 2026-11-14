@@ -899,6 +899,175 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
     }
   }
 
+  /* ---- blinking beacons shared by the habitat / pad / caches ---- */
+  const blinkers: Array<{ mat: THREE.MeshBasicMaterial; phase: number }> = [];
+
+  /* ---- habitat complex at the base waypoint (opposite side from the lander) ---- */
+  {
+    const base = POIS.find((p) => p.id === "base");
+    if (base) {
+      const azH = 305 * RAD;
+      const hx = toX(base.lon) + Math.sin(azH) * 16;
+      const hz = toZ(base.lat) - Math.cos(azH) * 16;
+      const hy = groundH(hx, hz);
+      const hab = new THREE.Group();
+      hab.position.set(hx, hy, hz);
+      hab.rotation.y = 2.1;
+
+      const habWhite = new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.5, metalness: 0.08 });
+      const habAccent = new THREE.MeshStandardMaterial({ color: 0xcf7a35, roughness: 0.55, metalness: 0.1 });
+      const habDark = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.7, metalness: 0.05 });
+      const strut = new THREE.MeshStandardMaterial({ color: 0x8d939c, roughness: 0.5, metalness: 0.35 });
+      const panelM = new THREE.MeshStandardMaterial({ color: 0x1d2c46, roughness: 0.35, metalness: 0.25, emissive: 0x0a1526, emissiveIntensity: 0.5 });
+      const windowM = new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.9 });
+      const padMarkM = new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.85 });
+      const beaconM = new THREE.MeshBasicMaterial({ color: 0xff5a5a, transparent: true, opacity: 0.9 });
+      const flagM = new THREE.MeshBasicMaterial({ color: 0xcf7a35, side: THREE.DoubleSide });
+      disposables.push(habWhite, habAccent, habDark, strut, panelM, windowM, padMarkM, beaconM, flagM);
+
+      /* pressurized dome habitat */
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(3.1, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), habWhite);
+      dome.position.y = 0.2;
+      dome.scale.y = 0.72;
+      const domeRing = new THREE.Mesh(new THREE.CylinderGeometry(3.12, 3.2, 0.5, 24), habAccent);
+      domeRing.position.y = 0.3;
+      /* dome windows */
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 + 0.4;
+        const w = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.32, 0.06), windowM);
+        w.position.set(Math.cos(a) * 2.55, 1.35, Math.sin(a) * 2.55);
+        w.lookAt(Math.cos(a) * 4, 1.35, Math.sin(a) * 4);
+        hab.add(w);
+      }
+      /* airlock tunnel */
+      const airlock = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 2.6, 14), habWhite);
+      airlock.rotation.z = Math.PI / 2;
+      airlock.position.set(4.1, 0.9, 0);
+      /* crew modules — two cylinders with rounded caps */
+      const modGeo = new THREE.CylinderGeometry(1.05, 1.05, 5.0, 16);
+      const capGeo = new THREE.SphereGeometry(1.05, 16, 12);
+      for (const mz of [-1, 1]) {
+        const mod = new THREE.Mesh(modGeo, habWhite);
+        mod.rotation.x = Math.PI / 2;
+        mod.position.set(7.6, 1.05, mz * 1.55);
+        const capA = new THREE.Mesh(capGeo, habWhite);
+        capA.position.set(7.6, 1.05, mz * 1.55 - mz * 2.5);
+        const capB = new THREE.Mesh(capGeo, habWhite);
+        capB.position.set(7.6, 1.05, mz * 1.55 + mz * 2.5);
+        const stripe = new THREE.Mesh(new THREE.CylinderGeometry(1.07, 1.07, 0.35, 16), habAccent);
+        stripe.rotation.x = Math.PI / 2;
+        stripe.position.set(7.6, 1.05, mz * 1.55 - mz * 1.6);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.3, 0.06), windowM);
+        win.position.set(7.6, 1.35, mz * 1.55 + mz * 1.12);
+        hab.add(mod, capA, capB, stripe, win);
+      }
+      /* solar array wings on struts behind the modules */
+      for (const sx of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.3, 8), strut);
+        post.position.set(7.6, 1.9, sx * 3.6);
+        post.rotation.x = sx * 0.35;
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.06, 2.0), panelM);
+        wing.position.set(7.6 + sx * 0.3, 2.7, sx * 4.6);
+        wing.rotation.x = 0.42;
+        hab.add(post, wing);
+      }
+      /* comms mast with blinking beacon */
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 6.4, 8), strut);
+      mast.position.set(-4.2, 3.2, -2.4);
+      const dish = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2.4), habWhite);
+      dish.position.set(-4.2, 5.6, -2.4);
+      dish.rotation.x = Math.PI * 0.72;
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), beaconM);
+      beacon.position.set(-4.2, 6.45, -2.4);
+      blinkers.push({ mat: beaconM, phase: 0 });
+      hab.add(mast, dish, beacon);
+      /* landing pad with edge markers */
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 4.8, 0.14, 28), habDark);
+      pad.position.set(0.5, 0.07, -7.6);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const mk = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.1, 0.28), padMarkM.clone());
+        mk.position.set(0.5 + Math.cos(a) * 4.1, 0.17, -7.6 + Math.sin(a) * 4.1);
+        blinkers.push({ mat: mk.material as THREE.MeshBasicMaterial, phase: i * 0.7 });
+        hab.add(mk);
+      }
+      /* crew flag */
+      const fPole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.4, 6), strut);
+      fPole.position.set(-1.6, 1.2, -4.6);
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.62), flagM);
+      flag.position.set(-1.05, 2.0, -4.6);
+      flag.rotation.y = 0.35;
+      hab.add(fPole, flag);
+
+      hab.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) {
+          o.castShadow = SHADOWS;
+          o.receiveShadow = SHADOWS;
+        }
+      });
+      disposables.push(modGeo, capGeo);
+      scene.add(hab);
+    }
+  }
+
+  /* ---- instrument cache at every science / hazard site waypoint ---- */
+  {
+    const cacheWhite = new THREE.MeshStandardMaterial({ color: 0xd7dce2, roughness: 0.55, metalness: 0.1 });
+    const cacheDark = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.7 });
+    const cacheStrut = new THREE.MeshStandardMaterial({ color: 0x8d939c, roughness: 0.5, metalness: 0.35 });
+    const cachePanel = new THREE.MeshStandardMaterial({ color: 0x1d2c46, roughness: 0.35, metalness: 0.25, emissive: 0x0a1526, emissiveIntensity: 0.5 });
+    const cacheLight = new THREE.MeshBasicMaterial({ color: 0x54e0ff, transparent: true, opacity: 0.85 });
+    disposables.push(cacheWhite, cacheDark, cacheStrut, cachePanel, cacheLight);
+    const boxGeo = new THREE.BoxGeometry(0.7, 0.42, 0.5);
+    const legGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.55, 6);
+    const mastGeo = new THREE.CylinderGeometry(0.025, 0.025, 1.5, 6);
+    const puckGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.05, 12);
+    const lightGeo = new THREE.SphereGeometry(0.08, 8, 6);
+    disposables.push(boxGeo, legGeo, mastGeo, puckGeo, lightGeo);
+    route.forEach((wp, i) => {
+      const poi = POIS.find((p) => p.id === wp.poiId);
+      if (!poi || poi.type === "base") return;
+      const az = (35 + i * 47) * RAD;
+      const x = toX(wp.lon) + Math.sin(az) * 6.5;
+      const z = toZ(wp.lat) - Math.cos(az) * 6.5;
+      const g = new THREE.Group();
+      g.position.set(x, groundH(x, z), z);
+      g.rotation.y = i * 1.3;
+      /* seismometer / env-package box on legs */
+      const box = new THREE.Mesh(boxGeo, cacheWhite);
+      box.position.y = 0.6;
+      for (const [lx, lz] of [[-0.24, -0.16], [0.24, -0.16], [-0.24, 0.16], [0.24, 0.16]] as const) {
+        const leg = new THREE.Mesh(legGeo, cacheStrut);
+        leg.position.set(lx, 0.28, lz);
+        leg.rotation.z = lx > 0 ? -0.18 : 0.18;
+        leg.rotation.x = lz > 0 ? 0.18 : -0.18;
+        g.add(leg);
+      }
+      /* antenna mast with status light */
+      const mast = new THREE.Mesh(mastGeo, cacheStrut);
+      mast.position.set(0.45, 0.75, -0.1);
+      mast.rotation.z = -0.12;
+      const light = new THREE.Mesh(lightGeo, cacheLight.clone());
+      light.position.set(0.55, 1.5, -0.1);
+      blinkers.push({ mat: light.material as THREE.MeshBasicMaterial, phase: 1 + i * 0.5 });
+      /* solar puck + dark instrument crate */
+      const puck = new THREE.Mesh(puckGeo, cachePanel);
+      puck.position.set(-0.5, 0.5, 0.25);
+      puck.rotation.z = 0.25;
+      const crate = new THREE.Mesh(boxGeo, cacheDark);
+      crate.position.set(-0.3, 0.22, -0.35);
+      crate.scale.set(0.8, 0.6, 0.9);
+      g.add(box, mast, light, puck, crate);
+      g.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) {
+          o.castShadow = SHADOWS;
+          o.receiveShadow = SHADOWS;
+        }
+      });
+      scene.add(g);
+    });
+  }
+
   /* ---- astronaut location beacon — pulsing rings + light pillar at the walker's feet ---- */
   const beaconMatRing = new THREE.MeshBasicMaterial({ color: 0x54e0ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false });
   const beaconMatBeam = new THREE.MeshBasicMaterial({ color: 0x54e0ff, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -1093,6 +1262,7 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
   let downscaled = false;
   let trimmed = false;
   let dustFade = 1;
+  let fogDenLerp = fogDen; /* eases up when a dust-storm drill darkens the sky */
 
   const sunDir = new THREE.Vector3(0, 1, 0);
   let raf = 0;
@@ -1150,7 +1320,10 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
         dx /= dl; dz /= dl;
         const upDot = grad > 1e-4 ? Math.max(-1, Math.min(1, (dx * gx + dz * gz) / grad)) : 0;
         const slopeEff = slopeNow * upDot; // + uphill · − downhill
-        const spd = Math.max(0.35, Math.min(3.4, slopeAdjustedSpeed(dashOn ? 11.4 : 4.9, slopeEff) / 3.6));
+        /* suited EVA pace: ~3.4 km/h careful walk, ~5.6 km/h brief suit lope on
+         * the dash — Apollo crews averaged 2.2–3.6 km/h; sprinting in a
+         * pressurized suit is not survivable physics */
+        const spd = Math.max(0.25, Math.min(1.7, slopeAdjustedSpeed(dashOn ? 5.6 : 3.4, slopeEff) / 3.6));
         manualSpeed = spd;
         pos.x = Math.max(-halfW + 60, Math.min(halfW - 60, pos.x + dx * spd * dt));
         pos.z = Math.max(-halfW + 60, Math.min(halfW - 60, pos.z + dz * spd * dt));
@@ -1253,6 +1426,14 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
     skyUniforms.uDay.value = day;
     sky.position.set(camera.position.x, 0, camera.position.z);
     fogColor.setRGB(0.93 * day, 0.70 * day, 0.47 * day);
+    if (day < 0.45) fogColor.lerp(new THREE.Color(0.32, 0.22, 0.15), (0.45 - day) * 1.6);
+    (scene.fog as THREE.FogExp2).color.copy(fogColor);
+    /* dust-storm drill: sky closes in, fog thickens, airborne dust doubles */
+    const dustStorm = st.hazard?.id === "dust_storm";
+    fogDenLerp += ((dustStorm ? 0.00058 : fogDen) - fogDenLerp) * Math.min(1, dt * 0.7);
+    (scene.fog as THREE.FogExp2).density = fogDenLerp;
+    terrainUniforms.uFogDen.value = fogDenLerp;
+    if (dustStorm) fogColor.lerp(new THREE.Color(0.52, 0.34, 0.19), 0.35);
     (scene.fog as THREE.FogExp2).color.copy(fogColor);
     terrainUniforms.uSunDir.value.copy(sunDir);
     terrainUniforms.uDay.value = day;
@@ -1276,7 +1457,12 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
         if (ry > 16) arr[ix + 1] -= 15; else if (ry < -2) arr[ix + 1] += 15;
       }
       dustGeo.attributes.position.needsUpdate = true;
-      dustUniforms.uOpacity.value = (0.16 + 0.2 * day) * dustFade;
+      dustUniforms.uOpacity.value = (0.16 + 0.2 * day) * dustFade * (dustStorm ? 2.4 : 1);
+    }
+
+    /* habitat / pad / cache beacons blink */
+    for (const b of blinkers) {
+      b.mat.opacity = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(tGlobal * 2.4 + b.phase));
     }
 
     /* beacons: pulse + next highlight + labels + route state */
