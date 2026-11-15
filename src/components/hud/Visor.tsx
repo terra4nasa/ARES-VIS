@@ -8,8 +8,10 @@
  *  - VisorPrefs: per-block display preferences (persisted per user)
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Play, Pause, FastForward, X, Settings2, Footprints, SkipForward, Mountain, Gauge, Radio, ShieldAlert, Activity, FlaskConical, Zap, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Hand, MapPin, HeartPulse, AlertTriangle, GripVertical, Layers, RotateCcw } from "lucide-react";
-import { HUD_PANELS, hudPanelDef, type HudPanelId } from "@/lib/hudPanels";
+import { Play, Pause, FastForward, X, Settings2, Footprints, SkipForward, Mountain, Gauge, Radio, ShieldAlert, Activity, FlaskConical, Zap, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Hand, MapPin, HeartPulse, AlertTriangle, GripVertical, Layers, RotateCcw, ChevronsUp, Truck, DoorOpen, Wind, BatteryCharging, Wrench, LogOut } from "lucide-react";
+import { HUD_PANELS, FRAME_CLIPS, hudPanelDef, type HudPanelId } from "@/lib/hudPanels";
+import { requestStructureEnter, structBus } from "@/lib/fpv3d";
+import type { StructureNode } from "@/lib/structures";
 import { useStore, type VisorPrefs, VISOR_PRESET } from "@/lib/store";
 import { useRouteProfile, useSpaceWeather } from "@/lib/hooks";
 import { FirstPersonTerrain } from "@/components/hud/FirstPerson";
@@ -31,6 +33,7 @@ function WalkEngine() {
   const sw = useSpaceWeather();
   const skipDwellNonce = useStore((s) => s.walk.skipDwellNonce);
   const jumpNonce = useStore((s) => s.walk.jumpNonce);
+  const chargeNonce = useStore((s) => s.walk.chargeNonce);
   const profileRef = useRef(profile);
   const swRef = useRef(sw);
   useEffect(() => {
@@ -38,22 +41,32 @@ function WalkEngine() {
     swRef.current = sw;
   }, [profile, sw]);
 
-  const sim = useRef({ distM: 0, elapsedH: 0, dwellH: 0, dwelled: new Set<number>(), warnedSteep: -1, o2Band: 0, manualDistM: 0 });
+  const sim = useRef({ distM: 0, elapsedH: 0, dwellH: 0, dwelled: new Set<number>(), warnedSteep: -1, o2Band: 0, manualDistM: 0, battery: 100, roverWarned: false });
   const rafRef = useRef<number>(0);
   const lastRef = useRef(0);
   const accRef = useRef(1); // physics accumulator (s) — runs at ~12 Hz
   const pubAccRef = useRef(1); // readout emit accumulator (s) — throttled to ~3.5 Hz to keep the HUD calm
   const lastJumpRef = useRef(0);
   const lastSkipRef = useRef(0);
+  const lastChargeRef = useRef(chargeNonce);
   const manualRef = useRef(false);
   const finishedManualRef = useRef(false);
   const lastOffRouteRef = useRef(0);
   const lastHazardAdviceRef = useRef(0);
 
   const resetSim = useCallback(() => {
-    sim.current = { distM: 0, elapsedH: 0, dwellH: 0, dwelled: new Set<number>(), warnedSteep: -1, o2Band: 0, manualDistM: 0 };
+    sim.current = { distM: 0, elapsedH: 0, dwellH: 0, dwelled: new Set<number>(), warnedSteep: -1, o2Band: 0, manualDistM: 0, battery: 100, roverWarned: false };
     lastRef.current = performance.now();
   }, []);
+
+  /** rover recharge handshake — the hab dock bumps chargeNonce */
+  useEffect(() => {
+    if (chargeNonce !== lastChargeRef.current) {
+      lastChargeRef.current = chargeNonce;
+      sim.current.battery = 100;
+      sim.current.roverWarned = false;
+    }
+  }, [chargeNonce]);
 
   /** hazard-adjusted model params — leak drills burn O₂ faster, SPE multiplies dose */
   const hazardAdj = useCallback(() => {
@@ -92,9 +105,16 @@ function WalkEngine() {
     }
 
     if (manualOn) {
-      /* on foot: real-time EVA clock (no sim multiplier) */
+      /* on foot/rover: real-time EVA clock (no sim multiplier) */
       st.elapsedH += dtRealS / 3600;
       st.manualDistM += camBus.speedMs * dtRealS;
+      if (walk.vehicle === "rover" && camBus.roverBattery > 0) {
+        st.battery = Math.max(0, st.battery - (camBus.speedMs * dtRealS / 1000) * 1.6);
+        if (st.battery === 0 && !st.roverWarned) {
+          st.roverWarned = true;
+          s.pushWalkEvent("ROVER BATTERY DEPLETED — ON FOOT UNTIL RECHARGE", "warn");
+        }
+      }
       if (camBus.offRouteM > 80 && performance.now() - lastOffRouteRef.current > 30000) {
         lastOffRouteRef.current = performance.now();
         s.pushWalkEvent(`OFF-ROUTE ${fmtDist(camBus.offRouteM)} — REJOIN THE TRAVERSE LINE`, "warn");
@@ -108,6 +128,16 @@ function WalkEngine() {
       }
     } else if (walk.playing && !walkReadoutDone(walk.readout)) {
       const adj = hazardAdj();
+      /* vehicle model — rover ~10 km/h between sites (gentler slope penalty),
+       * foot at the suited pace; battery drains ~1.6 %/km, empty rover limps */
+      const veh = walk.vehicle === "rover" && st.battery > 4 ? "rover" : "foot";
+      const evaEff = {
+        ...adj.eva,
+        // O₂ topped up inside structures extends the suit supply
+        suitHours: adj.eva.suitHours + walk.o2BonusH,
+        // slope-adjusted speed is computed inside walkReadout from speedKmh
+        speedKmh: veh === "rover" ? 10 : adj.eva.speedKmh,
+      };
       st.elapsedH += simH;
       if (st.dwellH > 0) {
         st.dwellH = Math.max(0, st.dwellH - simH);
@@ -117,9 +147,17 @@ function WalkEngine() {
         }
       } else {
         // slope at current position → effective speed → advance
-        const cur = walkReadout({ route, frame, profile: profileRef.current, eva: adj.eva, gcrDosePerSol: (swRef.current?.marsSurface.gcrDosePerSol ?? 0.7) * adj.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: 0 });
+        const cur = walkReadout({ route, frame, profile: profileRef.current, eva: evaEff, gcrDosePerSol: (swRef.current?.marsSurface.gcrDosePerSol ?? 0.7) * adj.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: 0, batteryPct: st.battery });
         const mPerS = (cur.speedEff * 1000) / 3600;
-        st.distM = Math.min(frame.totalM, st.distM + mPerS * dtRealS * walk.speedMult);
+        const stepM = mPerS * dtRealS * walk.speedMult;
+        st.distM = Math.min(frame.totalM, st.distM + stepM);
+        if (veh === "rover") {
+          st.battery = Math.max(0, st.battery - (stepM / 1000) * 1.6);
+          if (st.battery === 0 && !st.roverWarned) {
+            st.roverWarned = true;
+            s.pushWalkEvent("ROVER BATTERY DEPLETED — LIMPING ON ELECTRIC RESERVE · RECHARGE AT THE HAB DOCK", "warn");
+          }
+        }
       }
 
       /* waypoint arrival */
@@ -145,7 +183,7 @@ function WalkEngine() {
 
       /* hazard + O₂ advisories (once per threshold band) */
       const adj2 = hazardAdj();
-      const r = walkReadout({ route, frame, profile: profileRef.current, eva: adj2.eva, gcrDosePerSol: (swRef.current?.marsSurface.gcrDosePerSol ?? 0.7) * adj2.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH });
+      const r = walkReadout({ route, frame, profile: profileRef.current, eva: { ...adj2.eva, suitHours: adj2.eva.suitHours + walk.o2BonusH }, gcrDosePerSol: (swRef.current?.marsSurface.gcrDosePerSol ?? 0.7) * adj2.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH, batteryPct: st.battery });
       if (r.slope > 10 && r.legIdx !== st.warnedSteep) {
         st.warnedSteep = r.legIdx;
         s.pushWalkEvent(`STEEP TERRAIN ${r.slope.toFixed(0)}° · SPEED ${r.speedEff.toFixed(1)} KM/H`, "warn");
@@ -186,6 +224,9 @@ function WalkEngine() {
     const st = sim.current;
     const gcr = swRef.current?.marsSurface.gcrDosePerSol ?? 0.7;
     const adj = hazardAdj();
+    camBus.roverBattery = st.battery;
+    const veh = walk.vehicle === "rover" && st.battery > 4 ? "rover" : "foot";
+    const evaEff = { ...eva, suitHours: eva.suitHours + walk.o2BonusH, speedKmh: veh === "rover" ? 10 : eva.speedKmh };
     const r = manualRef.current
       ? manualReadout({
           route,
@@ -198,8 +239,9 @@ function WalkEngine() {
           slope: camBus.slopeDeg,
           speedMs: camBus.speedMs,
           walkedM: st.manualDistM,
+          batteryPct: st.battery,
         })
-      : walkReadout({ route, frame, profile: profileRef.current, eva: adj.eva, gcrDosePerSol: gcr * adj.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH });
+      : walkReadout({ route, frame, profile: profileRef.current, eva: evaEff, gcrDosePerSol: gcr * adj.doseFactor, distM: st.distM, elapsedH: st.elapsedH, dwellH: st.dwellH, batteryPct: st.battery });
     s.setWalkReadout(r);
   }, [hazardAdj]);
 
@@ -765,6 +807,7 @@ function CommsDockCard({ onOpen }: { onOpen: () => void }) {
 
 function EvaDockCard({ r }: { r: WalkReadout }) {
   const o2 = r.o2Pct;
+  const roverOn = useStore((s) => s.walk.vehicle === "rover");
   const color = o2 <= 20 ? "var(--hud-red)" : o2 <= 50 ? "var(--hud-amber)" : "var(--hud-green)";
   return (
     <div>
@@ -775,6 +818,17 @@ function EvaDockCard({ r }: { r: WalkReadout }) {
       <div className="mt-1 h-2.5 w-full overflow-hidden rounded-sm bg-[rgba(255,255,255,0.08)]">
         <div className="h-full transition-all duration-300" style={{ width: `${Math.min(100, Math.round(o2))}%`, background: color }} />
       </div>
+      {roverOn && (
+        <div className="mt-1.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="hud-label">rover battery</span>
+            <span className="font-display text-[12px]" style={{ color: r.batteryPct <= 20 ? "var(--hud-red)" : "var(--hud-amber)" }}>{r.batteryPct.toFixed(0)}%</span>
+          </div>
+          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-sm bg-[rgba(255,255,255,0.08)]">
+            <div className="h-full bg-[var(--hud-amber)] transition-all duration-300" style={{ width: `${Math.min(100, Math.round(r.batteryPct))}%` }} />
+          </div>
+        </div>
+      )}
       <div className="mt-1.5 space-y-0.5">
         <Row label="lst clock" value={fmtLst(r.lstNow)} glow />
         <Row label="elapsed" value={fmtClock(r.elapsedH)} />
@@ -855,6 +909,7 @@ function ControlClusterBody({ onPrefs, playing, manual, speedMult, finished, dri
 }) {
   const setWalkManual = useStore((s) => s.setWalkManual);
   const setWalkPlaying = useStore((s) => s.setWalkPlaying);
+  const setWalkVehicle = useStore((s) => s.setWalkVehicle);
   const cycleWalkSpeed = useStore((s) => s.cycleWalkSpeed);
   const jumpToNextWaypoint = useStore((s) => s.jumpToNextWaypoint);
   const stopWalk = useStore((s) => s.stopWalk);
@@ -863,14 +918,19 @@ function ControlClusterBody({ onPrefs, playing, manual, speedMult, finished, dri
   const openPanel = useStore((s) => s.openPanel);
   const commsOpen = useStore((s) => s.comms.open);
   const hazard = useStore((s) => s.hazard);
+  const vehicle = useStore((s) => s.walk.vehicle);
+  const batteryPct = useStore((s) => s.walk.readout?.batteryPct ?? 100);
   const dockBtn = "hud-btn !min-h-0 !flex-col !gap-0.5 !px-1 !py-1.5 text-[8px] leading-none";
   return (
     <div>
-      <div className="mt-0.5 grid grid-cols-5 gap-1">
-        <button className={`${dockBtn} ${manual ? "active" : ""}`} onClick={() => setWalkManual(!manual)} disabled={finished} title={manual ? "Return to auto-traverse (route-synced)" : "Take manual foot control (WASD / D-pad · SHIFT lope)"}>
+      <div className="mt-1 grid grid-cols-2 gap-1">
+        <button className={`${dockBtn} ${vehicle === "rover" ? "active !border-[rgba(255,179,71,0.65)] !text-[var(--hud-amber)]" : ""}`} onClick={() => setWalkVehicle(vehicle === "rover" ? "foot" : "rover")} disabled={finished} title={`Utility rover — ~10 km/h between sites, battery ${batteryPct.toFixed(0)}% (drains ~1.6%/km, recharge at the HAB dock) · [V] toggle`}>
+          <Truck className="h-4 w-4" />{vehicle === "rover" ? `rover ${batteryPct.toFixed(0)}%` : "rover"}
+        </button>
+        <button className={`${dockBtn} ${manual ? "active" : ""}`} onClick={() => setWalkManual(!manual)} disabled={finished} title={manual ? "Return to auto-traverse (route-synced)" : "Take manual foot control (WASD / D-pad · SHIFT lope · SPACE jump)"}>
           <Footprints className="h-4 w-4" />{manual ? "auto" : "foot"}
         </button>
-        <button className={dockBtn} onClick={() => cycleWalkSpeed()} disabled={manual} title={`Simulation time multiplier — astronaut ground speed stays ${useStore.getState().eva.speedKmh.toFixed(1)} km/h (slope-adjusted)`}>
+        <button className={dockBtn} onClick={() => cycleWalkSpeed()} disabled={manual} title={`Simulation time multiplier — ground speed stays ${vehicle === "rover" ? "10.0" : useStore.getState().eva.speedKmh.toFixed(1)} km/h (slope-adjusted)`}>
           <FastForward className="h-4 w-4" />{manual ? "foot" : `sim ×${speedMult}`}
         </button>
         <button className={dockBtn} onClick={() => jumpToNextWaypoint()} disabled={finished || manual} title="Skip to next waypoint">
@@ -1002,12 +1062,12 @@ function visorBounds(): { vw: number; vh: number; z: number } {
 function FloatingPanel({
   id,
   children,
-  panelClassName = "",
+  frameColor,
 }: {
   id: HudPanelId;
   children: React.ReactNode;
-  /** extra classes for the inner hud-panel frame (border accents) */
-  panelClassName?: string;
+  /** frame (border) color override — e.g. the cyan location beacon accent */
+  frameColor?: string;
 }) {
   const st = useStore((s) => s.hudPanels[id]);
   const setHudPanelRect = useStore((s) => s.setHudPanelRect);
@@ -1073,56 +1133,70 @@ function FloatingPanel({
         width: st.w,
         height: st.h !== null && !st.collapsed ? st.h : undefined,
         zIndex: 486 + st.z,
+        filter: active ? "drop-shadow(0 0 10px rgba(84,224,255,0.5))" : undefined,
       }}
       onPointerDown={() => focusHudPanel(id)}
     >
+      {/* shaped frame — the clip-path silhouette IS the border: an outer layer
+          painted in frame color, inset by 1px with the same polygon inside */}
       <div
-        className={`hud-panel flex h-full flex-col rounded-sm transition-shadow ${panelClassName} ${
-          active ? "!border-[rgba(84,224,255,0.65)] shadow-[0_0_20px_rgba(84,224,255,0.3)]" : ""
-        }`}
+        className="h-full w-full transition-[filter]"
+        style={{
+          clipPath: FRAME_CLIPS[def.shape],
+          background: active ? "rgba(84,224,255,0.75)" : frameColor ?? "var(--hud-border)",
+          padding: 1,
+        }}
       >
         <div
-          className="flex cursor-grab touch-none select-none items-center justify-between gap-1 border-b border-[var(--hud-border-dim)] px-1.5 py-1 active:cursor-grabbing"
-          onPointerDown={(e) => beginDrag(e, "move")}
-          title="Drag to move — edges snap · double-click to collapse"
-          onDoubleClick={() => collapseHudPanel(id, !st.collapsed)}
+          className="hud-panel relative flex h-full flex-col"
+          style={{ clipPath: FRAME_CLIPS[def.shape], border: "none" }}
         >
-          <span className="hud-label flex min-w-0 items-center gap-1 !text-[9px]">
-            <GripVertical className="h-3 w-3 shrink-0 opacity-45" />
-            <span className="truncate tracking-[0.16em]">{def.label.toUpperCase()}</span>
-          </span>
-          <span className="flex shrink-0 items-center gap-0.5">
-            <button
-              className="rounded-sm p-0.5 text-[var(--hud-dim)] hover:text-[var(--hud-amber)]"
-              onClick={() => collapseHudPanel(id, !st.collapsed)}
-              aria-label={st.collapsed ? `Expand ${def.label}` : `Collapse ${def.label}`}
-            >
-              {st.collapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
-            </button>
-            <button
-              className="rounded-sm p-0.5 text-[var(--hud-dim)] hover:text-[var(--hud-red)]"
-              onClick={() => toggleHudPanel(id, false)}
-              aria-label={`Close ${def.label}`}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        </div>
-        {!st.collapsed && (
-          <div className={`min-h-0 flex-1 overflow-y-auto px-2.5 py-2 ${st.h !== null ? "" : "overflow-y-visible"}`}>{children}</div>
-      )}
-        {def.resizable && !st.collapsed && (
           <div
-            className="absolute bottom-0 right-0 z-10 h-4 w-4 cursor-nwse-resize touch-none"
-            onPointerDown={(e) => beginDrag(e, "resize")}
-            title="Drag to resize"
-            aria-label={`Resize ${def.label}`}
+            className={`flex cursor-grab touch-none select-none items-center justify-between gap-1 border-b border-[var(--hud-border-dim)] py-1 active:cursor-grabbing ${
+              def.shape === "console" ? "pl-[18px] pr-1.5" : def.shape === "octagon" ? "px-3" : "px-1.5"
+            }`}
+            onPointerDown={(e) => beginDrag(e, "move")}
+            title="Drag to move — edges snap · double-click to collapse"
+            onDoubleClick={() => collapseHudPanel(id, !st.collapsed)}
           >
-            <svg viewBox="0 0 16 16" className="h-full w-full text-[var(--hud-dim)]">
-              <path d="M15 6 L6 15 M15 10 L10 15" stroke="currentColor" strokeWidth="1.2" fill="none" />
-            </svg>
+            <span className="hud-label flex min-w-0 items-center gap-1 !text-[9px]">
+              <GripVertical className="h-3 w-3 shrink-0 opacity-45" />
+              <span className="truncate tracking-[0.16em]">{def.label.toUpperCase()}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-0.5">
+              <button
+                className="rounded-sm p-0.5 text-[var(--hud-dim)] hover:text-[var(--hud-amber)]"
+                onClick={() => collapseHudPanel(id, !st.collapsed)}
+                aria-label={st.collapsed ? `Expand ${def.label}` : `Collapse ${def.label}`}
+              >
+                {st.collapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+              </button>
+              <button
+                className="rounded-sm p-0.5 text-[var(--hud-dim)] hover:text-[var(--hud-red)]"
+                onClick={() => toggleHudPanel(id, false)}
+                aria-label={`Close ${def.label}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
           </div>
-        )}
+          {!st.collapsed && (
+            <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${def.shape === "octagon" ? "px-3" : "px-2.5"} ${st.h !== null ? "" : "overflow-y-visible"}`}>{children}</div>
+          )}
+          {def.resizable && !st.collapsed && (
+            <div
+              className="absolute bottom-0 z-10 h-4 w-4 cursor-nwse-resize touch-none"
+              style={{ right: def.shape === "octagon" ? 0 : 12 }}
+              onPointerDown={(e) => beginDrag(e, "resize")}
+              title="Drag to resize"
+              aria-label={`Resize ${def.label}`}
+            >
+              <svg viewBox="0 0 16 16" className="h-full w-full text-[var(--hud-dim)]">
+                <path d="M15 6 L6 15 M15 10 L10 15" stroke="currentColor" strokeWidth="1.2" fill="none" />
+              </svg>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1238,6 +1312,13 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
       {/* ---- event toast (below the O₂ banner when that is showing) ---- */}
       <WalkEventToast lower={o2Low && prefs.hazards} />
 
+      {/* long-leg rover hint — walking the big site-to-site legs wastes suit time */}
+      {walk.vehicle === "foot" && !manual && !r.atEnd && r.nextDistM > 900 && (
+        <div className="pointer-events-none absolute bottom-[112px] left-1/2 z-[473] -translate-x-1/2">
+          <div className="hud-chip !text-[var(--hud-amber)]">next leg {fmtDist(r.nextDistM)} — at {r.speedEff.toFixed(1)} km/h that's {fmtClock(r.nextDistM / 1000 / Math.max(r.speedEff, 0.1)).slice(3)} · press [V] to take the rover</div>
+        </div>
+      )}
+
       {/* ---- science-stop dwell card ---- */}
       {r.dwellH > 0 && dwellWp && (
         <div className="pointer-events-auto absolute left-1/2 top-1/2 z-[575] -translate-x-1/2 -translate-y-1/2">
@@ -1257,6 +1338,8 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
 
       {/* ---- sample capture ---- */}
       <CapturePrompt />
+      <StructurePrompt />
+      <StructurePanel />
       <SampleTray />
       <ManualPad />
       <ControlsHint />
@@ -1312,7 +1395,7 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
       <FloatingPanel id="bio"><BioDockCard r={r} /></FloatingPanel>
       <FloatingPanel id="terrain"><TerrainDockCard r={r} /></FloatingPanel>
       <FloatingPanel id="rad"><RadDockCard r={r} /></FloatingPanel>
-      <FloatingPanel id="location" panelClassName="border-[rgba(84,224,255,0.4)]"><LocationBeaconCard /></FloatingPanel>
+      <FloatingPanel id="location" frameColor="rgba(84,224,255,0.5)"><LocationBeaconCard /></FloatingPanel>
       <FloatingPanel id="comms"><CommsDockCard onOpen={() => useStore.getState().setCommsOpen(!useStore.getState().comms.open)} /></FloatingPanel>
       <FloatingPanel id="minimap"><MiniMap /></FloatingPanel>
       {libOpen && <PanelLibrary onClose={() => setLibOpen(false)} />}
@@ -1371,11 +1454,14 @@ function PadButton({ onHold, children, title, accent = false }: {
 function ManualPad() {
   const finished = useStore((s) => !!s.walk.readout?.atEnd);
   const manual = useStore((s) => s.walk.manual);
+  const roverOn = useStore((s) => s.walk.vehicle === "rover");
   if (finished) return null;
   return (
     <div className="pointer-events-auto absolute bottom-[calc(16px_+_env(safe-area-inset-bottom))] left-2 z-[475] select-none md:left-3">
       {manual && (
-        <div className="hud-chip mb-1 !py-0.5 !text-[9px] !text-[var(--hud-amber)]">manual · shift = dash</div>
+        <div className="hud-chip mb-1 !py-0.5 !text-[9px] !text-[var(--hud-amber)]">
+          {roverOn ? "rover · V = disembark" : "manual · shift = dash · space = jump"}
+        </div>
       )}
       <div className="grid grid-cols-3 gap-1">
         <span />
@@ -1396,10 +1482,16 @@ function ManualPad() {
         <PadButton onHold={(d) => (walkInput.strafe = d ? 1 : 0)} title="Sidestep right (D)">
           <ChevronRight className="h-5 w-5" />
         </PadButton>
-        <span />
         <PadButton onHold={(d) => (walkInput.fwd = d ? -1 : 0)} title="Walk backward (S)">
           <ChevronDown className="h-5 w-5" />
         </PadButton>
+        {roverOn ? (
+          <span />
+        ) : (
+          <PadButton onHold={(d) => { if (d) walkInput.jump = true; }} title="Jump — SPACE · mars-gravity hop (0.39 g)">
+            <ChevronsUp className="h-5 w-5 text-[var(--hud-cyan)]" />
+          </PadButton>
+        )}
         <span />
       </div>
     </div>
@@ -1429,6 +1521,105 @@ function CapturePrompt() {
           <Hand className="h-3.5 w-3.5" /> collect sample · [E]
         </button>
       </VisorCard>
+    </div>
+  );
+}
+
+/* ================= enterable structures ================= */
+
+/** proximity prompt — "structure in range, [E] to enter" (polls the engine bus) */
+function StructurePrompt() {
+  const walkActive = useStore((s) => s.walk.active);
+  const [near, setNear] = useState<StructureNode | null>(null);
+  useEffect(() => {
+    const iv = setInterval(() => setNear(camBus.nearStructure), 140);
+    return () => clearInterval(iv);
+  }, []);
+  if (!near || !walkActive) return null;
+  return (
+    <div className="pointer-events-auto absolute left-1/2 top-[58%] z-[576] -translate-x-1/2 -translate-y-1/2">
+      <VisorCard className="w-[260px] border-[rgba(255,179,71,0.55)] !py-2 text-center">
+        <div className="hud-label blink">◉ structure in range</div>
+        <div className="font-display mt-0.5 text-[13px] text-[var(--hud-amber)] hud-glow">
+          {near.code} · {near.label}
+        </div>
+        <div className="hud-label mt-0.5">{near.sub}</div>
+        <button className="hud-btn mt-2 !min-h-0 w-full !py-1.5" onClick={() => requestStructureEnter(near)}>
+          <DoorOpen className="h-3.5 w-3.5" /> get inside · [E]
+        </button>
+      </VisorCard>
+    </div>
+  );
+}
+
+/** inside a structure — its capabilities, one-shot per visit */
+function StructurePanel() {
+  const walkActive = useStore((s) => s.walk.active);
+  const [node, setNode] = useState<StructureNode | null>(null);
+  const [used, setUsed] = useState<Set<string>>(new Set());
+  const reqSeen = useRef(0);
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (structBus.req !== reqSeen.current && structBus.node) {
+        reqSeen.current = structBus.req;
+        setNode(structBus.node);
+        setUsed(new Set());
+        useStore.getState().setWalkPlaying(false); // suit-up pause while inside
+      }
+    }, 140);
+    return () => clearInterval(iv);
+  }, []);
+  const act = (cap: string, fn: () => void) => {
+    fn();
+    setUsed((u) => new Set(u).add(cap));
+  };
+  const leave = () => {
+    setNode(null);
+    useStore.getState().setWalkPlaying(true);
+  };
+  if (!node || !walkActive) return null;
+  return (
+    <div className="pointer-events-auto absolute left-1/2 top-1/2 z-[578] -translate-x-1/2 -translate-y-1/2">
+      <div className="hud-panel w-[330px] max-w-[calc(100vw-24px)] rounded-sm p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="hud-label">inside · {node.code}</div>
+            <div className="font-display text-[15px] text-[var(--hud-amber)] hud-glow">{node.label.toUpperCase()}</div>
+            <div className="mt-0.5 text-[10px] text-[var(--hud-dim)]">{node.sub}</div>
+          </div>
+          <button className="text-[var(--hud-dim)] hover:text-[var(--hud-amber)]" onClick={leave} aria-label="Leave structure">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="mt-2 space-y-1.5">
+          {node.caps.map((c) => (
+            <button
+              key={c.id}
+              className={`hud-btn !min-h-0 w-full !justify-start !px-2 !py-1.5 text-left ${used.has(c.id) ? "opacity-45" : ""}`}
+              disabled={used.has(c.id)}
+              onClick={() => act(c.id, () => {
+                if (c.id === "o2") useStore.getState().topUpO2(40);
+                else if (c.id === "charge") useStore.getState().rechargeRover();
+                else if (c.id === "shelter") useStore.getState().takeShelter();
+                else if (c.id === "repair") useStore.getState().repairTools();
+                else if (c.id === "candle") useStore.getState().useO2Candle();
+              })}
+              title={c.desc}
+            >
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="flex items-center gap-1.5 text-[11px]" style={{ color: c.color }}>
+                  {c.id === "o2" || c.id === "candle" ? <Wind className="h-3.5 w-3.5" /> : c.id === "charge" ? <BatteryCharging className="h-3.5 w-3.5" /> : c.id === "shelter" ? <DoorOpen className="h-3.5 w-3.5" /> : <Wrench className="h-3.5 w-3.5" />}
+                  {c.label}
+                </span>
+                <span className="truncate text-[9px] font-normal text-[var(--hud-dim)]">{used.has(c.id) ? "✓ done this visit" : c.desc}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <button className="hud-btn active mt-2 !min-h-0 w-full !py-1.5" onClick={leave}>
+          <LogOut className="h-3.5 w-3.5" /> step outside · resume EVA
+        </button>
+      </div>
     </div>
   );
 }

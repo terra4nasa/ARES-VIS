@@ -16,6 +16,7 @@ import { loadFpvEnv, elevAt, sunElevAt, approachAngle, type FpvEnv } from "./fpv
 import { useStore } from "./store";
 import { SITE, POIS } from "./data";
 import { slopeAdjustedSpeed } from "./mars";
+import { structureNodes, type StructureNode } from "./structures";
 
 /* ---------------- shared camera bus (HUD reads without React re-render) --- */
 export interface CaptureTargetInfo {
@@ -41,16 +42,29 @@ export const camBus = {
   offRouteM: 0,
   slopeDeg: 0,
   elevM: 0,
+  roverBattery: 100, // rover battery % — published by the WalkEngine
+  nearStructure: null as import("./structures").StructureNode | null,
   target: null as CaptureTargetInfo | null,
 };
 
-/* on-screen pad input — HUD D-pad / DASH button write, the engine reads */
-export const walkInput = { fwd: 0, strafe: 0, dash: false };
+/* on-screen pad input — HUD D-pad / DASH / JUMP buttons write, the engine reads */
+export const walkInput = { fwd: 0, strafe: 0, dash: false, jump: false };
 
 /* sample-capture handshake — HUD [E] / button bumps the nonce, engine collects */
 let collectNonce = 0;
 export function requestSampleCollect() {
   collectNonce++;
+}
+
+/* structure-enter handshake — HUD [E] near a structure / ENTER button */
+export const structBus = {
+  req: 0,
+  node: null as import("./structures").StructureNode | null,
+};
+export function requestStructureEnter(node: import("./structures").StructureNode | null) {
+  if (!node) return;
+  structBus.req++;
+  structBus.node = node;
 }
 
 /* E2E/debug: teleport the astronaut (consumed by the running scene) */
@@ -59,8 +73,16 @@ export function debugTeleport(lon: number, lat: number) {
   teleportReq = { lon, lat };
 }
 
+/* debug handle (harmless in prod, used by E2E checks) */
+if (typeof window !== "undefined") {
+  (window as unknown as { __ARES_FPV__?: object }).__ARES_FPV__ = { debugTeleport, walkInput, structBus, camBus, requestStructureEnter, get nodes() { return structureNodesLive; } };
+}
+
 /* E2E/debug: live list of sample-target positions (filled at scene build) */
 export const debugSamples: Array<{ code: string; lon: number; lat: number }> = [];
+
+/* enterable structures for the CURRENT scene (rebuilt per site/route change) */
+let structureNodesLive: StructureNode[] = [];
 
 const RAD = Math.PI / 180;
 
@@ -1068,6 +1090,9 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
     });
   }
 
+  /* ---- structure nodes — enterable hab / caches (HUD proximity + [E] enter) ---- */
+  structureNodesLive = structureNodes(route, toX, toZ);
+
   /* ---- astronaut location beacon — pulsing rings + light pillar at the walker's feet ---- */
   const beaconMatRing = new THREE.MeshBasicMaterial({ color: 0x54e0ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false });
   const beaconMatBeam = new THREE.MeshBasicMaterial({ color: 0x54e0ff, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -1224,8 +1249,15 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
   const onKeyDown = (e: KeyboardEvent) => {
     if (keyGuard(e)) return;
     if (useStore.getState().walk.active && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+    if (e.code === "Space" && !e.repeat) walkInput.jump = true;
+    if (e.code === "KeyV" && !e.repeat && useStore.getState().walk.active && !useStore.getState().walk.readout?.finished) {
+      const w = useStore.getState();
+      w.setWalkVehicle(w.walk.vehicle === "rover" ? "foot" : "rover");
+      return;
+    }
     if (e.code === "KeyE" && !e.repeat) {
-      collectNonce++;
+      if (camBus.nearStructure && useStore.getState().walk.active) requestStructureEnter(camBus.nearStructure);
+      else collectNonce++;
       return;
     }
     pressed.add(e.code);
@@ -1258,6 +1290,10 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
     if (a && b) yaw = (Math.atan2(toX(b.lon) - toX(a.lon), -(toZ(b.lat) - toZ(a.lat))) * 180) / Math.PI;
   }
   let phase = 0;
+  /* mars-gravity hop — vy/jumpOff persist across frames (g = 3.71 m/s²) */
+  let jumpVy = 0;
+  let jumpOff = 0;
+  let grounded = true;
   let slowFrames = 0;
   let downscaled = false;
   let trimmed = false;
@@ -1303,6 +1339,9 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
       useStore.getState().setWalkManual(true); // WalkEngine pauses the auto-traverse
     }
     const manual = st.walk.active && st.walk.manual && !atEnd;
+    /* utility rover — ~10 km/h between sites, gentler slope penalty, no dash;
+     * at battery ≤ 4% it limps at foot pace */
+    const roverOn = st.walk.vehicle === "rover" && camBus.roverBattery > 4;
     let manualSpeed = 0;
     if (manual) {
       /* local terrain gradient → uphill/downhill speed factor */
@@ -1311,7 +1350,7 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
       const gz = (groundH(pos.x, pos.z + e2) - groundH(pos.x, pos.z - e2)) / (2 * e2);
       const grad = Math.hypot(gx, gz);
       const slopeNow = (Math.atan(grad) / Math.PI) * 180;
-      const dashOn = (pressed.has("ShiftLeft") || pressed.has("ShiftRight") || walkInput.dash) && inputMove;
+      const dashOn = !roverOn && (pressed.has("ShiftLeft") || pressed.has("ShiftRight") || walkInput.dash) && inputMove;
       if (inputMove) {
         const yawR = yaw * RAD;
         let dx = Math.sin(yawR) * iF + Math.cos(yawR) * iS;
@@ -1322,8 +1361,9 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
         const slopeEff = slopeNow * upDot; // + uphill · − downhill
         /* suited EVA pace: ~3.4 km/h careful walk, ~5.6 km/h brief suit lope on
          * the dash — Apollo crews averaged 2.2–3.6 km/h; sprinting in a
-         * pressurized suit is not survivable physics */
-        const spd = Math.max(0.25, Math.min(1.7, slopeAdjustedSpeed(dashOn ? 5.6 : 3.4, slopeEff) / 3.6));
+         * pressurized suit is not survivable physics. The rover covers the
+         * long site-to-site legs at ~10 km/h (Apollo LRV class). */
+        const spd = Math.max(0.25, Math.min(roverOn ? 3.1 : 1.7, slopeAdjustedSpeed(roverOn ? 10 : dashOn ? 5.6 : 3.4, slopeEff * (roverOn ? 0.55 : 1)) / 3.6));
         manualSpeed = spd;
         pos.x = Math.max(-halfW + 60, Math.min(halfW - 60, pos.x + dx * spd * dt));
         pos.z = Math.max(-halfW + 60, Math.min(halfW - 60, pos.z + dz * spd * dt));
@@ -1341,14 +1381,16 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
       camBus.slopeDeg = 0;
     }
 
-    /* position target (auto-walk eases toward the sim readout) */
+    /* position target (auto-walk eases toward the sim readout).
+     * No easing while paused — the astronaut stands where they are, so a
+     * structure visit (which pauses the walk) doesn't drag them off the door. */
     let tLon: number, tLat: number, lst: number;
     if (r) { tLon = r.lon; tLat = r.lat; lst = r.lstNow; }
     else {
       const a = routeNow[0] ?? { lon: SITE.lon, lat: SITE.lat };
       tLon = a.lon; tLat = a.lat; lst = st.eva.startLst;
     }
-    if (!manual) {
+    if (!manual && st.walk.playing) {
       const kPos = Math.min(1, dt * 3.2);
       pos.x += (toX(tLon) - pos.x) * kPos;
       pos.z += (toZ(tLat) - pos.z) * kPos;
@@ -1384,11 +1426,46 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
     /* gait */
     const speed = manual ? manualSpeed : (r?.speedEff ?? 0);
     if (moving) phase += dt * 2 * Math.PI * Math.min(2.6, Math.max(0.8, speed / 1.3));
-    const bob = moving ? Math.sin(phase) * 0.045 : Math.sin(tGlobal * 1.2) * 0.012;
-    const roll = moving ? Math.sin(phase * 0.5) * 0.011 : 0;
+    const bobAmp = roverOn ? 0.012 : 0.045; // rover ride is damped, no suit bob
+    const bob = moving ? Math.sin(phase) * bobAmp : Math.sin(tGlobal * 1.2) * 0.012;
+    const roll = moving ? Math.sin(phase * 0.5) * (roverOn ? 0.004 : 0.011) : 0;
+
+    /* mars-gravity hop — SPACE / D-pad JUMP (foot mode only; rover stays planted) */
+    if (walkInput.jump) {
+      if (grounded && manual && !roverOn) {
+        jumpVy = 2.4; // ~0.78 m apex, ~1.3 s air time at 0.39 g
+        grounded = false;
+      }
+      walkInput.jump = false;
+    }
+    if (!grounded) {
+      jumpVy -= 3.71 * dt;
+      jumpOff += jumpVy * dt;
+      if (jumpOff <= 0) {
+        jumpOff = 0;
+        jumpVy = 0;
+        grounded = true;
+      }
+    }
+
+    /* structure proximity — nearest enterable hab/cache (hab is a big complex:
+     * docking range 18 m; caches are service points at 9 m) */
+    {
+      let nd = Infinity;
+      let near: StructureNode | null = null;
+      for (const n of structureNodesLive) {
+        const d = Math.hypot(n.x - pos.x, n.z - pos.z);
+        if (d < nd) {
+          nd = d;
+          near = n;
+        }
+      }
+      const R = near?.type === "hab" ? 18 : 9;
+      camBus.nearStructure = near && nd <= R ? near : null;
+    }
 
     const ground = groundH(pos.x, pos.z);
-    const eye = ground + 1.72 + bob;
+    const eye = ground + (roverOn ? 1.98 : 1.72) + bob + jumpOff;
     const pitchDeg = (moving ? -5 + Math.sin(phase * 2) * 0.35 : -4) + pitchS;
 
     camera.position.set(pos.x, eye, pos.z);

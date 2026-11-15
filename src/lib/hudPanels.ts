@@ -49,18 +49,35 @@ export interface HudPanelDef {
   minW: number;
   minH: number;
   resizable: boolean;
+  /** frame silhouette, cut to match the panel's role — not a plain rectangle */
+  shape: PanelShape;
 }
 
+/** content-aware frame silhouettes (clip-path polygons, local px) */
+export type PanelShape = "octagon" | "console" | "wedge";
+
+export const FRAME_CLIPS: Record<PanelShape, string> = {
+  /* 10 px chamfer on all four corners — telemetry blocks */
+  octagon:
+    "polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px)",
+  /* console: heavy 16 px cut top-left + bottom-right — interactive panels */
+  console:
+    "polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px)",
+  /* wedge: single 18 px cut bottom-right — linear readouts (nav, comms) */
+  wedge:
+    "polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%)",
+};
+
 export const HUD_PANELS: HudPanelDef[] = [
-  { id: "control", label: "Control panel", hint: "walk · view · prefs · drills", w: 226, estH: 170, minW: 214, minH: 130, resizable: false },
-  { id: "nav", label: "Navigation", hint: "next WP · range · ETA · progress", w: 300, estH: 124, minW: 264, minH: 96, resizable: true },
-  { id: "eva", label: "EVA telemetry", hint: "O₂ bar · dose · LST clock", w: 188, estH: 154, minW: 172, minH: 122, resizable: true },
-  { id: "bio", label: "Biometrics", hint: "heart · core temp · work rate", w: 186, estH: 178, minW: 172, minH: 140, resizable: true },
-  { id: "terrain", label: "Terrain underfoot", hint: "elev · slope · speed · sun · air", w: 166, estH: 172, minW: 152, minH: 140, resizable: true },
-  { id: "rad", label: "Radiation", hint: "dose rate · cumulative · space wx", w: 178, estH: 172, minW: 166, minH: 140, resizable: true },
-  { id: "location", label: "Location beacon", hint: "live position · region · elev", w: 210, estH: 118, minW: 196, minH: 92, resizable: true },
-  { id: "comms", label: "Comms link", hint: "status · relay · last message", w: 192, estH: 196, minW: 178, minH: 150, resizable: true },
-  { id: "minimap", label: "Traverse mini-map", hint: "top-down route · walker cone", w: 150, estH: 156, minW: 128, minH: 128, resizable: true },
+  { id: "control", label: "Control panel", hint: "walk · view · prefs · drills", w: 226, estH: 170, minW: 214, minH: 130, resizable: false, shape: "console" },
+  { id: "nav", label: "Navigation", hint: "next WP · range · ETA · progress", w: 300, estH: 124, minW: 264, minH: 96, resizable: true, shape: "wedge" },
+  { id: "eva", label: "EVA telemetry", hint: "O₂ bar · dose · LST clock", w: 188, estH: 154, minW: 172, minH: 122, resizable: true, shape: "octagon" },
+  { id: "bio", label: "Biometrics", hint: "heart · core temp · work rate", w: 186, estH: 178, minW: 172, minH: 140, resizable: true, shape: "octagon" },
+  { id: "terrain", label: "Terrain underfoot", hint: "elev · slope · speed · sun · air", w: 166, estH: 172, minW: 152, minH: 140, resizable: true, shape: "octagon" },
+  { id: "rad", label: "Radiation", hint: "dose rate · cumulative · space wx", w: 178, estH: 172, minW: 166, minH: 140, resizable: true, shape: "octagon" },
+  { id: "location", label: "Location beacon", hint: "live position · region · elev", w: 210, estH: 118, minW: 196, minH: 92, resizable: true, shape: "octagon" },
+  { id: "comms", label: "Comms link", hint: "status · relay · last message", w: 192, estH: 196, minW: 178, minH: 150, resizable: true, shape: "wedge" },
+  { id: "minimap", label: "Traverse mini-map", hint: "top-down route · walker cone", w: 150, estH: 156, minW: 128, minH: 128, resizable: true, shape: "octagon" },
 ];
 
 export const HUD_PANEL_ORDER: HudPanelId[] = ["control", "nav", "eva", "bio", "terrain", "rad", "location", "comms", "minimap"];

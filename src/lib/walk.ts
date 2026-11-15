@@ -18,6 +18,7 @@ export interface WalkReadout {
   elapsedH: number; // sim EVA clock incl. science-stop dwell
   dwellH: number; // remaining science-stop time at current waypoint (sim hours)
   o2Pct: number; // remaining O₂ supply (% of suit supply; 100 at departure, depletes)
+  batteryPct: number; // rover battery (drains in rover mode, recharges at the hab dock)
   doseMsv: number;
   lstNow: number; // local solar time
   sunElev: number;
@@ -82,6 +83,7 @@ export function walkReadout(opts: {
   distM: number;
   elapsedH: number;
   dwellH: number;
+  batteryPct?: number;
 }): WalkReadout {
   const { route, frame, profile, eva, gcrDosePerSol, elapsedH, dwellH } = opts;
   const total = frame.totalM;
@@ -112,6 +114,7 @@ export function walkReadout(opts: {
     elapsedH,
     dwellH,
     o2Pct,
+    batteryPct: opts.batteryPct ?? 100,
     doseMsv,
     lstNow,
     sunElev: sunElevAt(lstNow),
@@ -177,6 +180,7 @@ export function manualReadout(opts: {
   slope: number;
   speedMs: number;
   walkedM: number;
+  batteryPct?: number;
 }): WalkReadout {
   const { route, eva, elapsedH } = opts;
   // nearest waypoint = current guidance target while free-walking
@@ -209,6 +213,7 @@ export function manualReadout(opts: {
     elapsedH,
     dwellH: 0,
     o2Pct,
+    batteryPct: opts.batteryPct ?? 100,
     doseMsv: (opts.gcrDosePerSol / 24) * elapsedH,
     lstNow: (eva.startLst + elapsedH) % 24,
     sunElev: sunElevAt((eva.startLst + elapsedH) % 24),

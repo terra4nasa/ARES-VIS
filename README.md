@@ -39,11 +39,24 @@ then step into a first-person **3D helmet visor** and physically walk the route.
   navigation, EVA, biometrics, terrain, radiation, location, comms, mini-map)
   is a movable window: drag by its title bar (viewport edges snap), resize
   from the corner, collapse to the header, close it, and re-add / re-stack /
-  reset from the panel library; the layout persists with your mission file
+  reset from the panel library; the layout persists with your mission file.
+  Frames are cut to the panel's role — chamfered octagons for telemetry, a
+  console silhouette for the control cluster, wedges for linear readouts —
+  not plain rectangles
+- **Enterable structures with per-site capabilities** — a pressurized hab
+  complex at base (O₂ resupply from the LOX bank, rover dock + charge, storm
+  shelter that rides out any active drill) and unpressurized instrument
+  caches at every science site (tool / drill service, spare O₂ candle); walk
+  within range and press **[E]** to get inside
 - **Dash-to-walk manual control** — hands-free auto-traverse *or* take the foot
-  controls: `WASD` / arrow keys / on-screen D-pad, **SHIFT to dash**, drag to
-  look around; speed stays in the realistic suited-EVA range (~3.4 km/h walk,
-  ~5.6 km/h lope) and reacts to the local terrain gradient
+  controls: `WASD` / arrow keys / on-screen D-pad, **SHIFT to dash**,
+  **SPACE to jump** (mars-gravity hop), drag to look around; suited speed
+  stays realistic (~3.4 km/h walk, ~5.6 km/h lope) and reacts to the local
+  terrain gradient
+- **Utility rover for the long legs** — toggle **[V]** (or the control button)
+  to ride at ~10 km/h between sites instead of suiting up for a 30-minute
+  hike; the battery drains ~1.6 %/km and recharges at the hab dock, and a
+  hint chip suggests the rover whenever the next leg is long
 - **3D sample collection** — 12 beaconed science targets along the traverse;
   aim within ~26° of the reticle inside 7 m and press **[E]** (or the HUD button)
   to secure the rock into the sample tray

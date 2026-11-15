@@ -118,6 +118,9 @@ export interface WalkSim {
   playing: boolean;
   manual: boolean; // astronaut on manual foot controls (WASD / D-pad · SHIFT dash)
   speedMult: number; // sim-time multiplier (1× real time … 240×)
+  vehicle: "foot" | "rover"; // utility vehicle — ~10 km/h between sites, drains its battery
+  o2BonusH: number; // O₂ topped up inside structures (hours of extra suit supply)
+  chargeNonce: number; // bump → WalkEngine recharges the rover battery (structure dock)
   readout: WalkReadout | null;
   event: { id: number; msg: string; kind: "info" | "arrive" | "warn" | "done" } | null;
   skipDwellNonce: number; // bump → engine ends the current science stop
@@ -182,6 +185,13 @@ interface AppStore {
   stopWalk: () => void;
   setWalkPlaying: (v: boolean) => void;
   setWalkManual: (v: boolean) => void;
+  /** structure capabilities + vehicle mode */
+  setWalkVehicle: (v: "foot" | "rover") => void;
+  topUpO2: (pct: number) => void;
+  rechargeRover: () => void;
+  takeShelter: () => void;
+  repairTools: () => void;
+  useO2Candle: () => void;
   collectSample: (s: CollectedSample) => void;
   cycleWalkSpeed: () => void;
   setWalkReadout: (r: WalkReadout) => void;
@@ -362,7 +372,7 @@ export const useStore = create<AppStore>((set, get) => {
     activePanel: null,
     eva: p.eva,
     visorPrefs: p.visorPrefs,
-    walk: { active: false, playing: false, manual: false, speedMult: 10, readout: null, event: null, skipDwellNonce: 0, jumpNonce: 0 },
+    walk: { active: false, playing: false, manual: false, speedMult: 10, vehicle: "foot", o2BonusH: 0, chargeNonce: 0, readout: null, event: null, skipDwellNonce: 0, jumpNonce: 0 },
     collected: [],
     cursor: null,
     mapZoom: 12,
@@ -484,7 +494,7 @@ export const useStore = create<AppStore>((set, get) => {
       const s = get();
       if (s.route.length < 2) return false;
       set({
-        walk: { active: true, playing: true, manual: false, speedMult: s.walk.speedMult, readout: null, event: { id: eventId++, msg: `MARSWALK DEPARTED · ${s.route[0].name}`, kind: "info" }, skipDwellNonce: 0, jumpNonce: 0 },
+        walk: { active: true, playing: true, manual: false, speedMult: s.walk.speedMult, vehicle: "foot", o2BonusH: 0, chargeNonce: 0, readout: null, event: { id: eventId++, msg: `MARSWALK DEPARTED · ${s.route[0].name}`, kind: "info" }, skipDwellNonce: 0, jumpNonce: 0 },
         collected: [],
         planMode: false,
         visorMode: true,
@@ -493,9 +503,43 @@ export const useStore = create<AppStore>((set, get) => {
       });
       return true;
     },
-    stopWalk: () => set({ walk: { active: false, playing: false, manual: false, speedMult: get().walk.speedMult, readout: null, event: null, skipDwellNonce: 0, jumpNonce: 0 } }),
+    stopWalk: () => set({ walk: { active: false, playing: false, manual: false, speedMult: get().walk.speedMult, vehicle: "foot", o2BonusH: 0, chargeNonce: 0, readout: null, event: null, skipDwellNonce: 0, jumpNonce: 0 } }),
     setWalkPlaying: (v) => set((s) => ({ walk: { ...s.walk, playing: v } })),
     setWalkManual: (v) => set((s) => ({ walk: { ...s.walk, manual: v } })),
+    setWalkVehicle: (v) => {
+      set((s) => ({
+        walk: {
+          ...s.walk,
+          vehicle: v,
+          event: { id: (s.walk.event?.id ?? 0) + 1, msg: v === "rover" ? "UTILITY ROVER ENGAGED — ~10 KM/H BETWEEN SITES · BATTERY DRAINS ~1.6 %/KM" : "DISEMBARKED — ON FOOT · SUITED PACE 3.4 KM/H (SHIFT TO LOPE)", kind: "info" as const },
+        },
+      }));
+    },
+    topUpO2: (pct) => {
+      set((s) => ({ walk: { ...s.walk, o2BonusH: s.walk.o2BonusH + (pct / 100) * s.eva.suitHours } }));
+      get().pushComms("crew", `Suit repressurized from the LOX bank — supply +${pct}%.`, "info");
+    },
+    rechargeRover: () => {
+      set((s) => ({ walk: { ...s.walk, chargeNonce: s.walk.chargeNonce + 1 } }));
+      get().pushComms("crew", "Rover docked and charging from the habitat solar array — battery 100%.", "info");
+    },
+    takeShelter: () => {
+      const s = get();
+      if (s.hazard) {
+        s.pushWalkEvent(`SHELTERED INSIDE HAB-01 — RIDING OUT ${s.hazard.def.label.toUpperCase()}`, "info");
+        s.pushComms("crew", "Inside the hab, hatch sealed. Sheltering from the drill event.", "info");
+        s.clearHazard();
+      } else {
+        s.pushWalkEvent("INSIDE HAB-01 — PRESSURIZED, SYSTEMS NOMINAL", "info");
+      }
+    },
+    repairTools: () => {
+      get().pushComms("crew", "Drill crown swapped and tool latches re-torqued from the cache spares — kit serviceable.", "info");
+    },
+    useO2Candle: () => {
+      set((s) => ({ walk: { ...s.walk, o2BonusH: s.walk.o2BonusH + (8 / 100) * s.eva.suitHours } }));
+      get().pushComms("crew", "O₂ candle cracked — suit supply +8%. Ventilating the cache before stowing.", "info");
+    },
     collectSample: (sm) => set((s) => ({ collected: [...s.collected, sm] })),
     cycleWalkSpeed: () =>
       set((s) => {
@@ -637,7 +681,7 @@ export const useStore = create<AppStore>((set, get) => {
         site,
         siteNonce: s.siteNonce + 1,
         route: seedRouteAt(clampedLat, clampedLon, code),
-        walk: { active: false, playing: false, manual: false, speedMult: s.walk.speedMult, readout: null, event: null, skipDwellNonce: 0, jumpNonce: 0 },
+        walk: { active: false, playing: false, manual: false, speedMult: s.walk.speedMult, vehicle: "foot", o2BonusH: 0, chargeNonce: 0, readout: null, event: null, skipDwellNonce: 0, jumpNonce: 0 },
         collected: [],
         focusTarget: { lon: clampedLon, lat: clampedLat, zoom: 13, nonce: (s.focusTarget?.nonce ?? 0) + 1 },
         comms: {
