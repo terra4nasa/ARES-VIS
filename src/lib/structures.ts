@@ -2,22 +2,27 @@
  * Surface structures with per-site capabilities — the things an astronaut can
  * physically "get inside" when something goes wrong.
  *
- * Two structure classes are rendered in the 3D scene (see fpv3d.ts):
- *  - HAB  — pressurized dome habitat complex at the BASE waypoint, 16 m NW of
- *           the pad (az 305°): O₂ resupply, rover docking/charge, storm shelter
- *  - CACHE— unpressurized instrument cache at every science / hazard site,
- *           6.5 m off the waypoint (az 35° + i·47°): tool/drill repair, spare
+ * Structures are placed from the ROUTE (not the POI catalog) so every site —
+ * default or relocated — gets its buildings:
+ *  - HAB  — pressurized dome habitat complex at the base waypoints (route
+ *           start + return), 16 m NW of the pad (az 305°): O₂ resupply, rover
+ *           dock + charge, storm shelter
+ *  - FL   — field lab station (pressurized work module): tool service,
+ *           rover charge
+ *  - CACHE— unpressurized instrument cache: tool / drill service, spare
  *           O₂ candle
+ *  - REL  — comms / power relay: rover charge, spare O₂ candle
+ * The three station types cycle across the intermediate waypoints, so each
+ * site stop has a different building with a different use.
  *
- * Structure positions are exported as nodes so the FPV engine can compute
- * proximity and the HUD can show the ENTER prompt. The formulas here MUST
- * match the mesh placement offsets in fpv3d.ts.
+ * Node positions are exported so the FPV engine can build the meshes and
+ * compute proximity from the SAME coordinates.
  */
 
-import { POIS } from "./data";
+import { bearingDeg } from "./mars";
 import type { RouteWaypoint } from "./store";
 
-export type StructureType = "hab" | "cache";
+export type StructureType = "hab" | "lab" | "cache" | "relay";
 export type CapId = "o2" | "charge" | "shelter" | "repair" | "candle";
 
 export interface CapDef {
@@ -45,51 +50,60 @@ export interface StructureNode extends StructureInfo {
 
 export const CAPS: Record<CapId, CapDef> = {
   o2: { id: "o2", label: "O₂ resupply", desc: "Repressurize from the hab's LOX bank — tops the suit back up by 40% of a full charge.", color: "var(--hud-green)" },
-  charge: { id: "charge", label: "Rover dock + charge", desc: "Dock the utility vehicle and recharge its battery to 100% from the solar array.", color: "var(--hud-amber)" },
+  charge: { id: "charge", label: "Rover dock + charge", desc: "Dock the utility vehicle and recharge its battery to 100% from the station array.", color: "var(--hud-amber)" },
   shelter: { id: "shelter", label: "Storm shelter", desc: "Get inside the regolith-shielded hab and ride out any active hazard drill under Mission Control's watch.", color: "var(--hud-cyan)" },
-  repair: { id: "repair", label: "Tool / drill service", desc: "Swap the worn drill crown and re-torque the tool latches from the cache spares.", color: "var(--hud-amber)" },
+  repair: { id: "repair", label: "Tool / drill service", desc: "Swap the worn drill crown and re-torque the tool latches from the station spares.", color: "var(--hud-amber)" },
   candle: { id: "candle", label: "Spare O₂ candle", desc: "Crack a chlorate candle from the emergency locker — +8% suit supply.", color: "var(--hud-green)" },
 };
 
-/** habitat complex capabilities (pressurized) */
 const HAB_CAPS: CapDef[] = [CAPS.o2, CAPS.charge, CAPS.shelter];
-/** instrument cache capabilities (unpressurized — gloves-on service) */
+const LAB_CAPS: CapDef[] = [CAPS.repair, CAPS.charge];
 const CACHE_CAPS: CapDef[] = [CAPS.repair, CAPS.candle];
+const RELAY_CAPS: CapDef[] = [CAPS.charge, CAPS.candle];
 
-/** structure metadata for a waypoint's POI type */
-export function structureForPoi(poiId: string | undefined, wpIdx: number): StructureInfo | null {
-  const poi = POIS.find((p) => p.id === poiId);
-  if (!poi) return null;
-  if (poi.type === "base") {
-    return {
-      id: "hab",
-      type: "hab",
-      code: "HAB-01",
-      label: "Hab complex",
-      sub: poi.name,
-      caps: HAB_CAPS,
-    };
+/** which station type sits at route index i (0-based); base waypoints → hab */
+export function structureForWp(i: number, total: number): StructureInfo {
+  if (i === 0 || i === total - 1) {
+    return { id: "hab", type: "hab", code: "HAB-01", label: "Hab complex", sub: "Base camp — pressurized", caps: HAB_CAPS };
   }
-  if (poi.type === "science" || poi.type === "hazard") {
-    return {
-      id: `cache-${wpIdx}`,
-      type: "cache",
-      code: `CACHE-${String(wpIdx).padStart(2, "0")}`,
-      label: "Instrument cache",
-      sub: poi.name,
-      caps: CACHE_CAPS,
-    };
-  }
-  return null;
+  const cycle: StructureInfo[] = [
+    { id: "lab", type: "lab", code: `FL-${String(i).padStart(2, "0")}`, label: "Field lab", sub: "Pressurized work module", caps: LAB_CAPS },
+    { id: "cache", type: "cache", code: `CACHE-${String(i).padStart(2, "0")}`, label: "Instrument cache", sub: "Unpressurized — gloves-on", caps: CACHE_CAPS },
+    { id: "relay", type: "relay", code: `REL-${String(i).padStart(2, "0")}`, label: "Comms relay", sub: "Power + signal mast", caps: RELAY_CAPS },
+  ];
+  return cycle[(i - 1) % 3];
 }
 
 const RAD = Math.PI / 180;
 
+/** heading the astronaut faces at route index i — the camera settles on the
+ *  departing-leg bearing (arrival bearing eases into it on approach) */
+function viewBearing(route: RouteWaypoint[], i: number): number {
+  if (i < route.length - 1) return bearingDeg(route[i], route[i + 1]);
+  return bearingDeg(route[i - 1], route[i]);
+}
+
 /**
- * Structure scene positions for the current route. Offsets MUST match the mesh
- * placement in fpv3d.ts (hab: 16 m @ 305° from base; cache: 6.5 m @ 35°+i·47°).
- * `toX`/`toZ` convert lon/lat → scene meters; they are passed in to keep this
- * module free of scene imports.
+ * Geo offsets (meters east / north) of the structure at route index i,
+ * placed INSIDE the camera's field of view (half-angle ≈ 36°) when the
+ * astronaut stands at the waypoint: stations 6 m at +30° (front-right of the
+ * view heading), hab airlock 10 m at −28° (front-left — the lander parks
+ * front-right at base, and the dome complex itself is scenery at the pad).
+ */
+export function structureOffset(route: RouteWaypoint[], i: number): { dE: number; dN: number } {
+  const total = route.length;
+  if (i === 0 || i === total - 1) {
+    const az = viewBearing(route, i) - 28;
+    return { dE: Math.sin(az * RAD) * 10, dN: Math.cos(az * RAD) * 10 };
+  }
+  const az = viewBearing(route, i) + 30;
+  return { dE: Math.sin(az * RAD) * 6, dN: Math.cos(az * RAD) * 6 };
+}
+
+/**
+ * Structure scene positions for the current route. `toX`/`toZ` convert
+ * lon/lat → scene meters; passed in to keep this module free of scene imports.
+ * Geo north maps to −z in scene space.
  */
 export function structureNodes(
   route: RouteWaypoint[],
@@ -98,15 +112,9 @@ export function structureNodes(
 ): StructureNode[] {
   const nodes: StructureNode[] = [];
   route.forEach((wp, i) => {
-    const info = structureForPoi(wp.poiId, i);
-    if (!info) return;
-    if (info.type === "hab") {
-      const azH = 305 * RAD;
-      nodes.push({ ...info, x: toX(wp.lon) + Math.sin(azH) * 16, z: toZ(wp.lat) - Math.cos(azH) * 16 });
-    } else {
-      const az = (35 + i * 47) * RAD;
-      nodes.push({ ...info, x: toX(wp.lon) + Math.sin(az) * 6.5, z: toZ(wp.lat) - Math.cos(az) * 6.5 });
-    }
+    const info = structureForWp(i, route.length);
+    const off = structureOffset(route, i);
+    nodes.push({ ...info, x: toX(wp.lon) + off.dE, z: toZ(wp.lat) - off.dN });
   });
   return nodes;
 }

@@ -14,7 +14,7 @@
 import * as THREE from "three";
 import { loadFpvEnv, elevAt, sunElevAt, approachAngle, type FpvEnv } from "./fpv";
 import { useStore } from "./store";
-import { SITE, POIS } from "./data";
+import { SITE } from "./data";
 import { slopeAdjustedSpeed } from "./mars";
 import { structureNodes, type StructureNode } from "./structures";
 
@@ -828,12 +828,12 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
 
   /* ---- InSight lander at the base waypoint ---- */
   {
-    const base = POIS.find((p) => p.id === "base");
-    if (base) {
+    const baseWp = route[0];
+    if (baseWp) {
       /* park the lander ~8 m SE of the base pad so the spawn view is clear */
       const azL = 118 * RAD;
-      const x = toX(base.lon) + Math.sin(azL) * 8;
-      const z = toZ(base.lat) - Math.cos(azL) * 8;
+      const x = toX(baseWp.lon) + Math.sin(azL) * 8;
+      const z = toZ(baseWp.lat) - Math.cos(azL) * 8;
       const y = groundH(x, z);
       const lander = new THREE.Group();
       /* materials: bright anodized-gold bus · brushed-gray deck · cell-textured panels */
@@ -926,11 +926,11 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
 
   /* ---- habitat complex at the base waypoint (opposite side from the lander) ---- */
   {
-    const base = POIS.find((p) => p.id === "base");
-    if (base) {
+    const baseWp = route[0];
+    if (baseWp) {
       const azH = 305 * RAD;
-      const hx = toX(base.lon) + Math.sin(azH) * 16;
-      const hz = toZ(base.lat) - Math.cos(azH) * 16;
+      const hx = toX(baseWp.lon) + Math.sin(azH) * 16;
+      const hz = toZ(baseWp.lat) - Math.cos(azH) * 16;
       const hy = groundH(hx, hz);
       const hab = new THREE.Group();
       hab.position.set(hx, hy, hz);
@@ -1032,54 +1032,117 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
     }
   }
 
-  /* ---- instrument cache at every science / hazard site waypoint ---- */
+  /* ---- site stations — enterable buildings at every waypoint: the hab dome
+   *  complex marks the base, and field lab / instrument cache / comms relay
+   *  cycle across the science stops (meshes + proximity nodes share coords) ---- */
   {
-    const cacheWhite = new THREE.MeshStandardMaterial({ color: 0xd7dce2, roughness: 0.55, metalness: 0.1 });
-    const cacheDark = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.7 });
-    const cacheStrut = new THREE.MeshStandardMaterial({ color: 0x8d939c, roughness: 0.5, metalness: 0.35 });
-    const cachePanel = new THREE.MeshStandardMaterial({ color: 0x1d2c46, roughness: 0.35, metalness: 0.25, emissive: 0x0a1526, emissiveIntensity: 0.5 });
-    const cacheLight = new THREE.MeshBasicMaterial({ color: 0x54e0ff, transparent: true, opacity: 0.85 });
-    disposables.push(cacheWhite, cacheDark, cacheStrut, cachePanel, cacheLight);
-    const boxGeo = new THREE.BoxGeometry(0.7, 0.42, 0.5);
-    const legGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.55, 6);
-    const mastGeo = new THREE.CylinderGeometry(0.025, 0.025, 1.5, 6);
-    const puckGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.05, 12);
-    const lightGeo = new THREE.SphereGeometry(0.08, 8, 6);
-    disposables.push(boxGeo, legGeo, mastGeo, puckGeo, lightGeo);
-    route.forEach((wp, i) => {
-      const poi = POIS.find((p) => p.id === wp.poiId);
-      if (!poi || poi.type === "base") return;
-      const az = (35 + i * 47) * RAD;
-      const x = toX(wp.lon) + Math.sin(az) * 6.5;
-      const z = toZ(wp.lat) - Math.cos(az) * 6.5;
+    const stWhite = new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.5, metalness: 0.1 });
+    const stAccent = new THREE.MeshStandardMaterial({ color: 0xcf7a35, roughness: 0.55, metalness: 0.1 });
+    const stDark = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.7 });
+    const stStrut = new THREE.MeshStandardMaterial({ color: 0x8d939c, roughness: 0.5, metalness: 0.35 });
+    const stPanel = new THREE.MeshStandardMaterial({ color: 0x1d2c46, roughness: 0.35, metalness: 0.25, emissive: 0x0a1526, emissiveIntensity: 0.55 });
+    const stWin = new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0.92 });
+    const stLight = new THREE.MeshBasicMaterial({ color: 0x54e0ff, transparent: true, opacity: 0.9 });
+    disposables.push(stWhite, stAccent, stDark, stStrut, stPanel, stWin, stLight);
+    const stations = structureNodes(route, toX, toZ);
+    structureNodesLive = stations;
+    const legGeoS = new THREE.CylinderGeometry(0.05, 0.05, 0.7, 6);
+    const mastGeoS = new THREE.CylinderGeometry(0.035, 0.045, 3.4, 6);
+    const lightGeoS = new THREE.SphereGeometry(0.09, 8, 6);
+    const padGeo = new THREE.CylinderGeometry(1.7, 1.9, 0.12, 20);
+    disposables.push(legGeoS, mastGeoS, lightGeoS, padGeo);
+    stations.forEach((n, i) => {
       const g = new THREE.Group();
-      g.position.set(x, groundH(x, z), z);
-      g.rotation.y = i * 1.3;
-      /* seismometer / env-package box on legs */
-      const box = new THREE.Mesh(boxGeo, cacheWhite);
-      box.position.y = 0.6;
-      for (const [lx, lz] of [[-0.24, -0.16], [0.24, -0.16], [-0.24, 0.16], [0.24, 0.16]] as const) {
-        const leg = new THREE.Mesh(legGeo, cacheStrut);
-        leg.position.set(lx, 0.28, lz);
-        leg.rotation.z = lx > 0 ? -0.18 : 0.18;
-        leg.rotation.x = lz > 0 ? 0.18 : -0.18;
-        g.add(leg);
+      g.position.set(n.x, groundH(n.x, n.z), n.z);
+      g.rotation.y = i * 1.1 + 0.6;
+      /* landing pad under every station */
+      const pad = new THREE.Mesh(padGeo, stPanel);
+      pad.position.y = 0.06;
+      g.add(pad);
+      if (n.type === "hab") {
+        /* hab airlock — the enterable anchor of the dome complex (the dome
+         * itself is built separately as scenery at the pad center) */
+        const air = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.62, 1.15, 12), stWhite);
+        air.position.y = 0.62;
+        const airTop = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.16, 12), stAccent);
+        airTop.position.y = 1.26;
+        const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.1, 10), stDark);
+        hatch.rotation.x = Math.PI / 2;
+        hatch.position.set(0, 0.62, 0.56);
+        g.add(air, airTop, hatch);
+      } else if (n.type === "lab") {
+        /* pressurized work module: horizontal cylinder on legs, window strip,
+         * solar wing — the biggest off-base structure */
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 2.6, 14), stWhite);
+        body.rotation.z = Math.PI / 2;
+        body.position.y = 1.15;
+        const capA = new THREE.Mesh(new THREE.SphereGeometry(0.85, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), stAccent);
+        capA.rotation.z = -Math.PI / 2;
+        capA.position.set(1.3, 1.15, 0);
+        const capB = capA.clone();
+        capB.rotation.z = Math.PI / 2;
+        capB.position.set(-1.3, 1.15, 0);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.18, 0.06), stWin);
+        win.position.set(0, 1.25, 0.83);
+        for (const [lx, lz] of [[-0.9, 0.45], [0.9, 0.45], [-0.9, -0.45], [0.9, -0.45]] as const) {
+          const leg = new THREE.Mesh(legGeoS, stStrut);
+          leg.position.set(lx, 0.35, lz);
+          g.add(leg);
+        }
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.05, 0.8), stPanel);
+        wing.position.set(-2.0, 1.7, 0);
+        wing.rotation.z = 0.35;
+        const wingStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.9, 6), stStrut);
+        wingStrut.position.set(-1.5, 1.2, 0);
+        wingStrut.rotation.z = 0.4;
+        g.add(body, capA, capB, win, wing, wingStrut);
+      } else if (n.type === "cache") {
+        /* equipment shelter: crate on legs with a marked door + spares boxes */
+        const shelter = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.1, 1.3), stWhite);
+        shelter.position.y = 1.05;
+        const lid = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.12, 1.4), stAccent);
+        lid.position.y = 1.66;
+        const door = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.05), stDark);
+        door.position.set(0.3, 0.95, 0.66);
+        for (const [lx, lz] of [[-0.7, 0.5], [0.7, 0.5], [-0.7, -0.5], [0.7, -0.5]] as const) {
+          const leg = new THREE.Mesh(legGeoS, stStrut);
+          leg.position.set(lx, 0.35, lz);
+          g.add(leg);
+        }
+        const crate1 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.4, 0.45), stDark);
+        crate1.position.set(-1.15, 0.3, 0.5);
+        const crate2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4), stAccent);
+        crate2.position.set(-1.05, 0.66, 0.45);
+        crate2.rotation.y = 0.5;
+        g.add(shelter, lid, door, crate1, crate2);
+      } else {
+        /* comms / power relay: tall mast + dish + battery bank + solar wing */
+        const mast = new THREE.Mesh(mastGeoS, stStrut);
+        mast.position.y = 1.7;
+        const dish = new THREE.Mesh(new THREE.SphereGeometry(0.55, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2.6), stWhite);
+        dish.position.set(0, 3.3, 0);
+        dish.rotation.x = Math.PI / 1.7;
+        const bank = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.7), stDark);
+        bank.position.set(0.15, 0.4, 0);
+        const solar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.05, 0.7), stPanel);
+        solar.position.set(-0.9, 0.85, 0);
+        solar.rotation.z = 0.3;
+        const solarStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 6), stStrut);
+        solarStrut.position.set(-0.45, 0.45, 0);
+        solarStrut.rotation.z = 0.35;
+        const cross = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.07, 0.07), stAccent);
+        cross.position.y = 2.6;
+        g.add(mast, dish, bank, solar, solarStrut, cross);
       }
-      /* antenna mast with status light */
-      const mast = new THREE.Mesh(mastGeo, cacheStrut);
-      mast.position.set(0.45, 0.75, -0.1);
-      mast.rotation.z = -0.12;
-      const light = new THREE.Mesh(lightGeo, cacheLight.clone());
-      light.position.set(0.55, 1.5, -0.1);
+      /* status beacon + name label — makes the station findable from the pad */
+      const light = new THREE.Mesh(lightGeoS, stLight.clone());
+      light.position.y = n.type === "relay" ? 3.5 : 2.3;
+      g.add(light);
       blinkers.push({ mat: light.material as THREE.MeshBasicMaterial, phase: 1 + i * 0.5 });
-      /* solar puck + dark instrument crate */
-      const puck = new THREE.Mesh(puckGeo, cachePanel);
-      puck.position.set(-0.5, 0.5, 0.25);
-      puck.rotation.z = 0.25;
-      const crate = new THREE.Mesh(boxGeo, cacheDark);
-      crate.position.set(-0.3, 0.22, -0.35);
-      crate.scale.set(0.8, 0.6, 0.9);
-      g.add(box, mast, light, puck, crate);
+      const label = makeLabelSprite(`${n.code} · ${n.label.toUpperCase()}`, n.type === "lab" ? "#ffb347" : "#54e0ff");
+      label.position.y = n.type === "relay" ? 4.1 : 2.9;
+      label.scale.set(3.2, 0.8, 1);
+      g.add(label);
       g.traverse((o) => {
         if ((o as THREE.Mesh).isMesh) {
           o.castShadow = SHADOWS;
@@ -1089,9 +1152,6 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
       scene.add(g);
     });
   }
-
-  /* ---- structure nodes — enterable hab / caches (HUD proximity + [E] enter) ---- */
-  structureNodesLive = structureNodes(route, toX, toZ);
 
   /* ---- astronaut location beacon — pulsing rings + light pillar at the walker's feet ---- */
   const beaconMatRing = new THREE.MeshBasicMaterial({ color: 0x54e0ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false });
@@ -1391,7 +1451,7 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
       tLon = a.lon; tLat = a.lat; lst = st.eva.startLst;
     }
     if (!manual && st.walk.playing) {
-      const kPos = Math.min(1, dt * 3.2);
+      const kPos = Math.min(1, dt * 6);
       pos.x += (toX(tLon) - pos.x) * kPos;
       pos.z += (toZ(tLat) - pos.z) * kPos;
     }
@@ -1399,7 +1459,18 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
     /* heading */
     let yawT: number;
     if (manual) yawT = yaw; // free look — heading is user-driven on foot
-    else if (r && !atEnd) yawT = r.bearing;
+    else if (r && !atEnd) {
+      /* while standing AT a waypoint (science stop) r.bearing degenerates to
+       * atan2(0,0)=0 — settle on the leg LEAVING this waypoint instead, which
+       * is where the route (and the site station) actually goes */
+      const ni = r.nextIdx;
+      const a = route[ni];
+      const b = route[Math.min(ni + 1, route.length - 1)];
+      const legBrg = a && b && (a.lon !== b.lon || a.lat !== b.lat)
+        ? (Math.atan2(toX(b.lon) - toX(a.lon), -(toZ(b.lat) - toZ(a.lat))) * 180) / Math.PI
+        : r.bearing;
+      yawT = r.nextDistM > 12 ? r.bearing : legBrg;
+    }
     else if (r) yawT = yaw;
     else {
       const a = routeNow[0], b = routeNow[1];

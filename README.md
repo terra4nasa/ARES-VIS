@@ -43,11 +43,15 @@ then step into a first-person **3D helmet visor** and physically walk the route.
   Frames are cut to the panel's role — chamfered octagons for telemetry, a
   console silhouette for the control cluster, wedges for linear readouts —
   not plain rectangles
-- **Enterable structures with per-site capabilities** — a pressurized hab
-  complex at base (O₂ resupply from the LOX bank, rover dock + charge, storm
-  shelter that rides out any active drill) and unpressurized instrument
-  caches at every science site (tool / drill service, spare O₂ candle); walk
-  within range and press **[E]** to get inside
+- **Enterable structures with per-site capabilities** — every waypoint gets a
+  real building placed in your arrival view: a pressurized hab complex at
+  base (airlock + dome: O₂ resupply from the LOX bank, rover dock + charge,
+  storm shelter that rides out any active drill), then a **field lab**
+  (tool service, rover charge), an **instrument cache** (tool / drill
+  service, spare O₂ candle) and a **comms relay** (rover charge, O₂ candle)
+  cycling across the science stops; walk within range and press **[E]** to
+  get inside. Works on every site — default or relocated — and the science
+  stop card moves to the left edge so arrival prompts stack cleanly center
 - **Dash-to-walk manual control** — hands-free auto-traverse *or* take the foot
   controls: `WASD` / arrow keys / on-screen D-pad, **SHIFT to dash**,
   **SPACE to jump** (mars-gravity hop), drag to look around; suited speed

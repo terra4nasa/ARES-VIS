@@ -1319,10 +1319,11 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
         </div>
       )}
 
-      {/* ---- science-stop dwell card ---- */}
+      {/* ---- science-stop dwell card — anchored LEFT so it never collides
+           with the centered arrival prompts ---- */}
       {r.dwellH > 0 && dwellWp && (
-        <div className="pointer-events-auto absolute left-1/2 top-1/2 z-[575] -translate-x-1/2 -translate-y-1/2">
-          <VisorCard className="w-[300px] border-[rgba(84,224,255,0.45)] text-center">
+        <div className="pointer-events-auto absolute left-2 top-1/2 z-[575] -translate-y-1/2 md:left-3">
+          <VisorCard className="w-[288px] border-[rgba(84,224,255,0.45)] text-center">
             <div className="hud-label">science stop in progress · {dwellWp.name}</div>
             <div className="font-display mt-1 text-lg text-[var(--hud-cyan)] hud-glow-cyan">{POIS.find((p) => p.id === dwellWp.poiId)?.name ?? dwellWp.name}</div>
             <div className="mt-1 text-[11px] text-[var(--hud-text)]">
@@ -1337,8 +1338,11 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
       )}
 
       {/* ---- sample capture ---- */}
-      <CapturePrompt />
-      <StructurePrompt />
+      {/* arrival prompts stack in one column — never overlap each other */}
+      <div className="pointer-events-none absolute left-1/2 top-[37%] z-[576] flex -translate-x-1/2 flex-col items-center gap-2">
+        <CapturePrompt />
+        <StructurePrompt />
+      </div>
       <StructurePanel />
       <SampleTray />
       <ManualPad />
@@ -1510,7 +1514,7 @@ function CapturePrompt() {
   }, []);
   if (!t) return null;
   return (
-    <div className="pointer-events-auto absolute left-1/2 top-[46%] z-[575] -translate-x-1/2 -translate-y-1/2">
+    <div className="pointer-events-auto">
       <VisorCard className="w-[248px] border-[rgba(84,224,255,0.55)] !py-2 text-center">
         <div className="hud-label blink">◉ sample in capture range</div>
         <div className="font-display mt-0.5 text-[13px] text-[var(--hud-cyan)] hud-glow-cyan">
@@ -1537,7 +1541,7 @@ function StructurePrompt() {
   }, []);
   if (!near || !walkActive) return null;
   return (
-    <div className="pointer-events-auto absolute left-1/2 top-[58%] z-[576] -translate-x-1/2 -translate-y-1/2">
+    <div className="pointer-events-auto">
       <VisorCard className="w-[260px] border-[rgba(255,179,71,0.55)] !py-2 text-center">
         <div className="hud-label blink">◉ structure in range</div>
         <div className="font-display mt-0.5 text-[13px] text-[var(--hud-amber)] hud-glow">
