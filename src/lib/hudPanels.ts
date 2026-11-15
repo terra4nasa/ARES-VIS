@@ -120,78 +120,75 @@ export function panelsOpenFromPrefs(p: {
 }
 
 /**
- * Default layout — open panels packed into right-edge columns (starting below
- * the compass tape); a column that reaches the bottom edge wraps into a new
- * column left of the widest panel so far. Closed panels get parked coordinates
- * (clamped into view when opened). Widths shrink on narrow viewports.
+ * Default layout — the reference visor arrangement:
+ *   · traverse mini-map pinned top-left
+ *   · location beacon pinned top-right
+ *   · a bottom dock row — comms · biometrics · EVA · weather · terrain · nav —
+ *     bottom-aligned above the status bar
+ *   · control cluster bottom-right, docked just above the dock row
+ * Closed panels get parked coordinates (clamped into view when opened).
+ * Widths shrink on narrow viewports.
  */
 export function defaultHudPanels(
   vw: number,
   vh: number,
   open: Partial<Record<HudPanelId, boolean>>
 ): Record<HudPanelId, HudPanelState> {
-  const gap = 10;
   const margin = 8;
-  const topStart = 64; // below the compass tape
   const scale = vw < 1100 ? 0.92 : 1;
-  const colW = (id: HudPanelId) => Math.round(hudPanelDef(id).w * scale);
+  const w = (id: HudPanelId) => Math.round(hudPanelDef(id).w * scale);
+  const h = (id: HudPanelId) => Math.round((hudPanelDef(id).estH + 26) * scale); // + header bar
+  const statusH = 36; // global bottom status bar
+  const dockBottom = vh - margin - statusH;
+  const dockGap = Math.round(22 * scale);
+  const dockRow: HudPanelId[] = ["comms", "bio", "eva", "wx", "terrain", "nav"];
+  const maxDockH = Math.max(...dockRow.map(h));
 
   const out = {} as Record<HudPanelId, HudPanelState>;
-  // column bookkeeping: right edge of the column, fill depth, widest panel
-  const cols: { right: number; y: number; maxW: number }[] = [{ right: vw - margin, y: topStart, maxW: 0 }];
-  const col = () => cols[cols.length - 1];
+  const slot = (id: HudPanelId): { x: number; y: number } => {
+    if (id === "minimap") return { x: margin, y: 64 }; // top-left, below the compass tape
+    if (id === "location") return { x: vw - w(id) - margin, y: 64 }; // top-right
+    if (id === "control") {
+      // bottom-right, docked just above the dock row
+      return { x: vw - w(id) - margin, y: dockBottom - maxDockH - 12 - h(id) };
+    }
+    if (id === "rad") return { x: vw - w(id) - margin, y: 64 + h("location") + 10 }; // parked below the beacon
+    // bottom dock row — left to right, bottom-aligned above the status bar
+    const idx = dockRow.indexOf(id);
+    let x = margin;
+    for (let i = 0; i < idx; i++) x += w(dockRow[i]) + dockGap;
+    return { x, y: dockBottom - h(id) };
+  };
 
   for (const id of HUD_PANEL_ORDER) {
-    const def = hudPanelDef(id);
-    const isOpen = open[id] ?? false;
-    const w = colW(id);
-    const slotH = Math.round((def.estH + 26) * scale); // + header bar
-    let c = col();
-    if (isOpen && c.y + slotH > vh - margin - 12) {
-      cols.push({ right: c.right - c.maxW - gap, y: topStart, maxW: 0 });
-      c = col();
-    }
+    const { x, y } = slot(id);
     out[id] = {
-      open: isOpen,
+      open: open[id] ?? false,
       collapsed: false,
-      x: Math.max(margin, Math.round(c.right - w)),
-      y: Math.round(c.y),
-      w,
+      x: Math.max(margin, Math.round(x)),
+      y: Math.max(44, Math.round(y)),
+      w: w(id),
       h: null,
       z: 1,
     };
-    if (isOpen) {
-      c.y += slotH + gap;
-      c.maxW = Math.max(c.maxW, w);
-    }
   }
   return out;
 }
 
-/** tidy re-stack: pack every open panel into edge columns, preserving open/collapsed/size */
+/** tidy re-stack: send every open panel back to its reference dock slot, preserving open/collapsed/size */
 export function stackedHudPanels(
   vw: number,
   vh: number,
   cur: Record<HudPanelId, HudPanelState>
 ): Record<HudPanelId, HudPanelState> {
   const next = { ...cur };
-  const gap = 10;
-  const margin = 8;
-  const topStart = 64;
-  const cols: { right: number; y: number; maxW: number }[] = [{ right: vw - margin, y: topStart, maxW: 0 }];
+  const fresh = defaultHudPanels(
+    vw,
+    vh,
+    Object.fromEntries(Object.entries(cur).map(([id, st]) => [id, st.open])) as Partial<Record<HudPanelId, boolean>>
+  );
   for (const id of HUD_PANEL_ORDER) {
-    const st = next[id];
-    if (!st.open) continue;
-    const def = hudPanelDef(id);
-    const h = st.h ?? def.estH + 26;
-    let c = cols[cols.length - 1];
-    if (c.y + h > vh - margin - 12) {
-      cols.push({ right: c.right - c.maxW - gap, y: topStart, maxW: 0 });
-      c = cols[cols.length - 1];
-    }
-    next[id] = { ...st, x: Math.max(margin, Math.round(c.right - st.w)), y: Math.round(c.y) };
-    c.y += h + gap;
-    c.maxW = Math.max(c.maxW, st.w);
+    next[id] = { ...next[id], x: fresh[id].x, y: fresh[id].y, z: 1 };
   }
   return next;
 }

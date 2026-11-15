@@ -1854,6 +1854,9 @@ export function VisorOverlay() {
     const apply = () => {
       const z = Math.min(1.42, Math.max(1, window.innerWidth / 1650));
       document.documentElement.style.setProperty("--hud-zoom", z.toFixed(3));
+      // panels live in LOCAL units inside the zoomed surface — re-dock them now
+      // that the zoom var (and therefore vp()) reflects the real viewport
+      useStore.getState().stackHudPanels();
     };
     apply();
     window.addEventListener("resize", apply);
