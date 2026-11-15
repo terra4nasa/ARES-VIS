@@ -19,6 +19,7 @@ export type HudPanelId =
   | "bio"
   | "terrain"
   | "rad"
+  | "wx"
   | "location"
   | "comms"
   | "minimap";
@@ -75,12 +76,13 @@ export const HUD_PANELS: HudPanelDef[] = [
   { id: "bio", label: "Biometrics", hint: "heart · core temp · work rate", w: 186, estH: 178, minW: 172, minH: 140, resizable: true, shape: "octagon" },
   { id: "terrain", label: "Terrain underfoot", hint: "elev · slope · speed · sun · air", w: 166, estH: 172, minW: 152, minH: 140, resizable: true, shape: "octagon" },
   { id: "rad", label: "Radiation", hint: "dose rate · cumulative · space wx", w: 178, estH: 172, minW: 166, minH: 140, resizable: true, shape: "octagon" },
+  { id: "wx", label: "Mars weather — live", hint: "MSL REMS · Gale Crater temps", w: 178, estH: 148, minW: 166, minH: 110, resizable: true, shape: "octagon" },
   { id: "location", label: "Location beacon", hint: "live position · region · elev", w: 210, estH: 118, minW: 196, minH: 92, resizable: true, shape: "octagon" },
   { id: "comms", label: "Comms link", hint: "status · relay · last message", w: 192, estH: 196, minW: 178, minH: 150, resizable: true, shape: "wedge" },
   { id: "minimap", label: "Traverse mini-map", hint: "top-down route · walker cone", w: 150, estH: 156, minW: 128, minH: 128, resizable: true, shape: "octagon" },
 ];
 
-export const HUD_PANEL_ORDER: HudPanelId[] = ["control", "nav", "eva", "bio", "terrain", "rad", "location", "comms", "minimap"];
+export const HUD_PANEL_ORDER: HudPanelId[] = ["control", "nav", "eva", "bio", "terrain", "rad", "wx", "location", "comms", "minimap"];
 
 export function hudPanelDef(id: HudPanelId): HudPanelDef {
   return HUD_PANELS.find((d) => d.id === id) ?? HUD_PANELS[0];
@@ -89,8 +91,8 @@ export function hudPanelDef(id: HudPanelId): HudPanelDef {
 /** panel ids open under each density preset (positions are kept) */
 export const PRESET_PANEL_OPEN: Record<"minimal" | "standard" | "full", HudPanelId[]> = {
   minimal: ["control", "nav", "eva", "location"],
-  standard: ["control", "nav", "eva", "terrain", "rad", "location", "comms", "minimap"],
-  full: ["control", "nav", "eva", "bio", "terrain", "rad", "location", "comms", "minimap"],
+  standard: ["control", "nav", "eva", "terrain", "rad", "wx", "location", "comms", "minimap"],
+  full: ["control", "nav", "eva", "bio", "terrain", "rad", "wx", "location", "comms", "minimap"],
 };
 
 /** which panels the legacy visorPrefs booleans map to (migration) */
@@ -111,6 +113,7 @@ export function panelsOpenFromPrefs(p: {
     bio: p.bio,
     terrain: p.terrain,
     rad: p.rad,
+    wx: p.terrain, // live Mars weather follows the terrain-panel preference
     comms: p.comms,
     minimap: p.minimap,
   };

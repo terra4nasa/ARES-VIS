@@ -43,7 +43,7 @@ export function AppShell() {
       <div className="flex h-dvh flex-col items-center justify-center" style={{ background: "var(--hud-bg)" }}>
         <div className="flex items-center gap-3 opacity-80">
           <Orbit className="h-8 w-8 animate-pulse text-[var(--hud-orange)]" />
-          <span className="font-display text-sm tracking-[0.3em] text-[var(--hud-amber)]">ARES-VIS · BOOTING</span>
+          <span className="font-display text-sm tracking-[0.3em] text-[var(--hud-amber)]">REDDOT MARSWALK · BOOTING</span>
         </div>
       </div>
     );

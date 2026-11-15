@@ -27,8 +27,8 @@ export function BootOverlay() {
         <div className="mb-6 flex items-center gap-3">
           <Orbit className="h-10 w-10 text-[var(--hud-orange)] hud-glow" />
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-[0.28em] text-[var(--hud-amber)] hud-glow">ARES-VIS</h1>
-            <p className="hud-label">interplanetary survival guide · martian map · nasa space apps 2026</p>
+            <h1 className="font-display text-2xl font-bold tracking-[0.2em] text-[var(--hud-amber)] hud-glow">REDDOT MARSWALK</h1>
+            <p className="hud-label">singapore's little red dot on the red planet · nasa space apps 2026</p>
           </div>
         </div>
         <p className="mb-6 text-sm leading-relaxed text-[var(--hud-text)]">

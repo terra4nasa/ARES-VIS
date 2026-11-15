@@ -74,7 +74,7 @@ export function chatter(ctx: CommsCtx): string {
     `Orbiter pass in ~${(6 + Math.random() * 9).toFixed(0)} min — buffer any imagery you want downlinked.`,
     `Space-weather watch: ${ctx.spaceWx.replace("_", " ")} — ${ctx.spaceWx === "NOMINAL" ? "no restrictions on EVA duration." : "keep excursions conservative."}`,
     `Reminder: dust-mitigation brush for the camera windows at your next stop.`,
-    `SEIS logged a small event near Cerberus Fossae overnight — nothing local, keep walking.`,
+    `SEIS logged a small event near Cerberus Fossae overnight — nothing local, keep traversing.`,
     `Terrain team confirms your traverse corridor is trafficable — ${ctx.signal < 60 ? "watch for comms shadowing in the next draw." : "comms corridor looks clean."}`,
     `Habitat copies your beacon at ${fmtLonLat(ctx.lon, ctx.lat)} — “${ctx.locName}” matches our expected fix.`,
     `Suit fluid loop looks textbook, EVA-1. Hydrate at the next dwell.`,

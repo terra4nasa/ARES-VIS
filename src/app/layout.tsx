@@ -6,9 +6,9 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "ARES-VIS — Elysium Marswalk Planner",
+  title: "RedDot Marswalk — Elysium Traverse Planner",
   description:
-    "A layered, integrated Mars surface map for planning astronaut Marswalks — built from NASA MOLA, HRSC, CTX, Viking, THEMIS, InSight and live space-weather data. NASA Space Apps 2026 'Interplanetary Survival Guide: Martian Map'.",
+    "RedDot Marswalk — Singapore's Little Red Dot on the Red Planet. A layered, integrated Mars surface map for planning astronaut traverses — built from NASA MOLA, HRSC, CTX, Viking, THEMIS, InSight and live space-weather data. NASA Space Apps 2026 'Interplanetary Survival Guide: Martian Map'.",
   icons: { icon: "assets/img/pov_final_location.jpg" },
 };
 

@@ -1,14 +1,16 @@
-# ARES-VIS — Elysium Marswalk Planner
+# RedDot Marswalk — Elysium Traverse Planner
+
+*(formerly ARES-VIS)*
 
 **NASA Space Apps 2026 · Interplanetary Survival Guide: Martian Map**
 
 **🔴 Live app:** **[https://ares-vis.vercel.app](https://ares-vis.vercel.app/)**
 — full 2D planner + 3D visor + NASA live data (APOD, EPIC, NEO watch, space weather).
 
-ARES-VIS fuses decades of robotic Mars-mission data into one hyper-local planning
+RedDot Marswalk — named for Singapore's "Little Red Dot" on the Red Planet — fuses decades of robotic Mars-mission data into one hyper-local planning
 tool for a Marswalk across **Elysium Planitia** — the plains where NASA's InSight
 lander listened to Mars quakes for four years. Plan the EVA on a 2D orbital map,
-then step into a first-person **3D helmet visor** and physically walk the route.
+then step into a first-person **3D helmet visor** and physically traverse the route.
 
 > **ARES** = the Greek counterpart of Mars · **VIS** = the helmet **VIS**or
 
@@ -35,6 +37,10 @@ then step into a first-person **3D helmet visor** and physically walk the route.
 - **Biometrics & radiation visor panels** — heart rate, core temp, suit pressure
   and work-rate MET live beside a real-time dose rate (µSv/h) driven by the
   live space-weather feed; configurable per-block in visor prefs
+- **Live Mars weather panel** — real REMS telemetry from MSL Curiosity at
+  Gale Crater (MAAS2 mirror, no key): sol, high/low air temp, pressure,
+  sky opacity, season, sunrise/sunset; cached server-side 30 min and degrades
+  to an honest STALE badge if the mirror blips, so the panel never lies
 - **Floating HUD panel workspace** — every visor panel (control cluster,
   navigation, EVA, biometrics, terrain, radiation, location, comms, mini-map)
   is a movable window: drag by its title bar (viewport edges snap), resize
@@ -131,7 +137,7 @@ pm2 save && pm2 startup    # auto-start on boot
 
 ```ini
 [Unit]
-Description=ARES-VIS Marswalk Planner
+Description=RedDot Marswalk (Elysium Traverse Planner)
 After=network.target
 
 [Service]

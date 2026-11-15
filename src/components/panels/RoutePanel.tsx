@@ -44,7 +44,7 @@ export function RoutePanel() {
               <span className="text-[9px]">return to base</span>
             </button>
           </div>
-          <button className="hud-btn active mt-2 w-full !py-2.5" disabled={route.length < 2} onClick={() => startWalk()} title="Walk the route in the helmet visor with live telemetry">
+          <button className="hud-btn active mt-2 w-full !py-2.5" disabled={route.length < 2} onClick={() => startWalk()} title="Traverse the route in the helmet visor with live telemetry">
             <Footprints className="h-4 w-4" /> walk this route (visor)
           </button>
           <p className="mt-2 text-[9px] leading-relaxed text-[var(--hud-dim)]">
@@ -68,7 +68,7 @@ export function RoutePanel() {
                 <span className="hud-label">base walk speed (suited)</span>
                 <span className="text-[var(--hud-cyan)]">{eva.speedKmh.toFixed(1)} km/h</span>
               </div>
-              <Slider value={[eva.speedKmh]} min={1.5} max={4} step={0.1} onValueChange={(v) => setEva({ speedKmh: v[0] })} aria-label="Walk speed" />
+              <Slider value={[eva.speedKmh]} min={1.5} max={4} step={0.1} onValueChange={(v) => setEva({ speedKmh: v[0] })} aria-label="Suited pace" />
               <p className="mt-1 text-[10px] leading-tight text-[var(--hud-dim)]">avg human walking pace ≈ 4.8 km/h · suited EVA 1.5–4.0 (default 2.6)</p>
             </div>
             <div>

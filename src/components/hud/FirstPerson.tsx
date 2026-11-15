@@ -69,7 +69,7 @@ export function FirstPersonTerrain() {
         ref={canvasRef}
         className="h-full w-full"
         style={{ display: ready ? "block" : "none", filter: "saturate(1.05) contrast(1.03)" }}
-        aria-label="First-person Mars surface view from the walking astronaut"
+        aria-label="First-person Mars surface view from the traversing astronaut"
       />
       {!ready && !failed && (
         <div className="absolute inset-0 flex items-center justify-center bg-[#120a06]">

@@ -1354,6 +1354,12 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
   let jumpVy = 0;
   let jumpOff = 0;
   let grounded = true;
+  /* manual momentum — a suited crew doesn't snap to speed or stop dead */
+  let manCur = 0; // smoothed speed (m/s)
+  let manDx = 0, manDz = 0; // last movement direction (kept while coasting)
+  let manPrev = 0, manAccel = 0; // for the rover's suspension dip
+  let lastR: unknown = null; // last auto-traverse readout (for dead-reckoning)
+  let lastRT = 0;
   let slowFrames = 0;
   let downscaled = false;
   let trimmed = false;
@@ -1411,29 +1417,45 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
       const grad = Math.hypot(gx, gz);
       const slopeNow = (Math.atan(grad) / Math.PI) * 180;
       const dashOn = !roverOn && (pressed.has("ShiftLeft") || pressed.has("ShiftRight") || walkInput.dash) && inputMove;
+      let target = 0;
       if (inputMove) {
         const yawR = yaw * RAD;
-        let dx = Math.sin(yawR) * iF + Math.cos(yawR) * iS;
-        let dz = -Math.cos(yawR) * iF + Math.sin(yawR) * iS;
+        /* sidesteps are shorter than strides — a suited astronaut shuffles sideways */
+        let dx = Math.sin(yawR) * iF + Math.cos(yawR) * iS * 0.72;
+        let dz = -Math.cos(yawR) * iF + Math.sin(yawR) * iS * 0.72;
         const dl = Math.hypot(dx, dz) || 1;
         dx /= dl; dz /= dl;
+        manDx = dx; manDz = dz;
         const upDot = grad > 1e-4 ? Math.max(-1, Math.min(1, (dx * gx + dz * gz) / grad)) : 0;
         const slopeEff = slopeNow * upDot; // + uphill · − downhill
         /* suited EVA pace: ~3.4 km/h careful walk, ~5.6 km/h brief suit lope on
          * the dash — Apollo crews averaged 2.2–3.6 km/h; sprinting in a
          * pressurized suit is not survivable physics. The rover covers the
          * long site-to-site legs at ~10 km/h (Apollo LRV class). */
-        const spd = Math.max(0.25, Math.min(roverOn ? 3.1 : 1.7, slopeAdjustedSpeed(roverOn ? 10 : dashOn ? 5.6 : 3.4, slopeEff * (roverOn ? 0.55 : 1)) / 3.6));
-        manualSpeed = spd;
-        pos.x = Math.max(-halfW + 60, Math.min(halfW - 60, pos.x + dx * spd * dt));
-        pos.z = Math.max(-halfW + 60, Math.min(halfW - 60, pos.z + dz * spd * dt));
+        target = Math.max(0.25, Math.min(roverOn ? 3.1 : 1.7, slopeAdjustedSpeed(roverOn ? 10 : dashOn ? 5.6 : 3.4, slopeEff * (roverOn ? 0.55 : 1)) / 3.6));
       }
+      /* momentum — in 0.38 g nothing snaps: the suit builds to pace over about
+       * a stride and coasts to a stop; the rover is heavier still (slow
+       * spool-up, gentle regen braking). This is what was missing — without
+       * it every tap read like a dying battery. */
+      const accel = target > manCur ? (roverOn ? 3.2 : 6.5) : (roverOn ? 5.5 : 8.5);
+      manCur += (target - manCur) * Math.min(1, dt * accel);
+      if (manCur < 0.02) manCur = 0;
+      manAccel += ((manCur - manPrev) / Math.max(dt, 1e-3) - manAccel) * Math.min(1, dt * 6);
+      manPrev = manCur;
+      if (manCur > 0 && (manDx !== 0 || manDz !== 0)) {
+        pos.x = Math.max(-halfW + 60, Math.min(halfW - 60, pos.x + manDx * manCur * dt));
+        pos.z = Math.max(-halfW + 60, Math.min(halfW - 60, pos.z + manDz * manCur * dt));
+      }
+      manualSpeed = manCur;
       camBus.manual = true;
       camBus.speedMs = manualSpeed;
-      camBus.dashing = dashOn;
+      camBus.dashing = dashOn && manCur > 1.0;
       camBus.offRouteM = distToRoute(pos.x, pos.z);
       camBus.slopeDeg = slopeNow;
     } else {
+      manCur = 0;
+      manPrev = 0;
       camBus.manual = false;
       camBus.speedMs = 0;
       camBus.dashing = false;
@@ -1450,10 +1472,20 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
       const a = routeNow[0] ?? { lon: SITE.lon, lat: SITE.lat };
       tLon = a.lon; tLat = a.lat; lst = st.eva.startLst;
     }
+    if (r && r !== lastR) { lastR = r; lastRT = tGlobal; }
     if (!manual && st.walk.playing) {
-      const kPos = Math.min(1, dt * 6);
-      pos.x += (toX(tLon) - pos.x) * kPos;
-      pos.z += (toZ(tLat) - pos.z) * kPos;
+      /* dead-reckon between readout emits (~3.5 Hz): extrapolate the target
+       * along the sim's speed/bearing so the eased avatar doesn't surge and
+       * stall with every emit — that pulse was the "low battery" shuffle */
+      const paused = dwelling || atEnd;
+      const v = paused ? 0 : r?.speedEff ?? 0;
+      const brgR = (r?.bearing ?? 0) * RAD;
+      const age = Math.min(2, Math.max(0, tGlobal - lastRT));
+      const tx = toX(tLon) + Math.sin(brgR) * v * age;
+      const tz = toZ(tLat) - Math.cos(brgR) * v * age;
+      const kPos = Math.min(1, dt * 4.5);
+      pos.x += (tx - pos.x) * kPos;
+      pos.z += (tz - pos.z) * kPos;
     }
 
     /* heading */
@@ -1494,12 +1526,15 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
     const yawSpeed = r ? 2.4 : 1.5;
     yaw = approachAngle(yaw, yawT + lookS, Math.min(1, dt * yawSpeed));
 
-    /* gait */
-    const speed = manual ? manualSpeed : (r?.speedEff ?? 0);
-    if (moving) phase += dt * 2 * Math.PI * Math.min(2.6, Math.max(0.8, speed / 1.3));
-    const bobAmp = roverOn ? 0.012 : 0.045; // rover ride is damped, no suit bob
+    /* gait — Mars 0.38 g reads as a floaty, bouncy stride: bounce grows with
+     * pace (a suited lope spends more time airborne than an Earth walk), the
+     * stride lengthens at speed; the rover stays damped but leans into turns
+     * and dips on throttle like real suspension */
+    const speed = manual ? manCur : (r?.speedEff ?? 0);
+    if (moving) phase += dt * 2 * Math.PI * Math.min(2.8, Math.max(0.75, speed / (roverOn ? 2.4 : 1.15)));
+    const bobAmp = roverOn ? 0.014 : 0.034 + 0.026 * Math.min(1, speed / 1.6);
     const bob = moving ? Math.sin(phase) * bobAmp : Math.sin(tGlobal * 1.2) * 0.012;
-    const roll = moving ? Math.sin(phase * 0.5) * (roverOn ? 0.004 : 0.011) : 0;
+    const roll = moving ? Math.sin(phase * 0.5) * (roverOn ? 0.005 : 0.012) + (roverOn ? -iS * 0.02 : 0) : 0;
 
     /* mars-gravity hop — SPACE / D-pad JUMP (foot mode only; rover stays planted) */
     if (walkInput.jump) {
@@ -1537,7 +1572,9 @@ export async function createFpvScene(canvas: HTMLCanvasElement, opts?: FpvSceneO
 
     const ground = groundH(pos.x, pos.z);
     const eye = ground + (roverOn ? 1.98 : 1.72) + bob + jumpOff;
-    const pitchDeg = (moving ? -5 + Math.sin(phase * 2) * 0.35 : -4) + pitchS;
+    const pitchDeg = (moving ? -5 + Math.sin(phase * 2) * 0.4 : -4) + pitchS
+      + (manual && !roverOn && manCur > 0.2 ? Math.min(1, manCur / 1.6) * 1.6 : 0) // lean into the stride
+      + (roverOn ? manAccel * 0.35 : 0); // nose up on throttle, dips on regen braking
 
     camera.position.set(pos.x, eye, pos.z);
     camera.rotation.order = "YXZ";

@@ -879,6 +879,55 @@ function RadDockCard({ r }: { r: WalkReadout }) {
   );
 }
 
+/* Mars weather — live REMS telemetry from MSL Curiosity at Gale Crater via
+ * /api/mars-weather (MAAS2 mirror). Polls every 5 min; shows honest STALE
+ * data when the upstream mirror is briefly unreachable. */
+function WeatherDockCard() {
+  const [wx, setWx] = useState<{ sol: number; minTemp: number; maxTemp: number; pressure: number; atmo: string; season: string; sunrise: string; sunset: string; date: string; live: boolean } | null>(null);
+  const [err, setErr] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      fetch("/api/mars-weather")
+        .then((res) => res.json())
+        .then((d) => {
+          if (!alive) return;
+          if (d.ok) { setWx(d); setErr(false); } else { setErr(true); }
+        })
+        .catch(() => { if (alive) setErr(true); });
+    load();
+    const iv = setInterval(load, 5 * 60 * 1000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+  if (err && !wx) {
+    return (
+      <div className="text-center">
+        <div className="hud-label">REMS uplink — no data</div>
+        <div className="mt-1 text-[10px] leading-tight text-[var(--hud-dim)]">Gale Crater mirror unreachable · retrying every 5 min</div>
+      </div>
+    );
+  }
+  if (!wx) {
+    return (
+      <div className="text-center">
+        <div className="hud-label blink">contacting REMS relay…</div>
+      </div>
+    );
+  }
+  return (
+    <div className="text-[11px] leading-tight">
+      <div className="flex items-baseline justify-between">
+        <span className="font-display text-lg text-[var(--hud-cyan)] hud-glow-cyan">{wx.maxTemp}°<span className="text-[11px] text-[var(--hud-dim)]">C</span></span>
+        <span className="hud-label">{wx.live ? "LIVE" : "STALE"} · SOL {wx.sol}</span>
+      </div>
+      <div className="mt-0.5">low <b className="text-[var(--hud-cyan)]">{wx.minTemp}°C</b> · air <b className="text-[var(--hud-cyan)]">{wx.pressure} Pa</b></div>
+      <div className="mt-0.5">sky <b className="text-[var(--hud-cyan)]">{wx.atmo}</b> · <b className="text-[var(--hud-cyan)]">{wx.season}</b></div>
+      <div className="mt-0.5 text-[10px] text-[var(--hud-dim)]">sunrise {wx.sunrise} · sunset {wx.sunset} UTC</div>
+      <div className="mt-1 text-[10px] leading-tight text-[var(--hud-dim)]">MSL Curiosity REMS · Gale Crater · sol {wx.sol} ({wx.date}){wx.live ? "" : " · last good"}</div>
+    </div>
+  );
+}
+
 function TerrainDockCard({ r }: { r: WalkReadout }) {
   const slopeColor = r.slope > 10 ? "var(--hud-red)" : r.slope > 6 ? "var(--hud-amber)" : "var(--hud-green)";
   return (
@@ -939,7 +988,7 @@ function ControlClusterBody({ onPrefs, playing, manual, speedMult, finished, dri
         <button className={dockBtn} onClick={() => setWalkPlaying(!playing)} disabled={finished} title={playing ? "Pause walk" : "Resume walk"}>
           {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}{playing ? "pause" : "play"}
         </button>
-        <button className={`${dockBtn} !border-[rgba(248,113,113,0.55)] !text-[var(--hud-red)]`} onClick={() => stopWalk()} title="End walk — exit visor">
+        <button className={`${dockBtn} !border-[rgba(248,113,113,0.55)] !text-[var(--hud-red)]`} onClick={() => stopWalk()} title="End traverse — exit visor">
           <X className="h-4 w-4" />end
         </button>
       </div>
@@ -1331,7 +1380,7 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
             </div>
             <div className="font-display mt-2 text-2xl text-[var(--hud-amber)]">{fmtClock(r.dwellH)} <span className="text-[10px] text-[var(--hud-dim)]">remaining (sim)</span></div>
             <button className="hud-btn mt-3 !min-h-0 w-full !py-1.5" onClick={() => useStore.getState().skipDwell()}>
-              <FastForward className="h-3.5 w-3.5" /> resume walking
+              <FastForward className="h-3.5 w-3.5" /> resume traverse
             </button>
           </VisorCard>
         </div>
@@ -1399,6 +1448,7 @@ function WalkHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void })
       <FloatingPanel id="bio"><BioDockCard r={r} /></FloatingPanel>
       <FloatingPanel id="terrain"><TerrainDockCard r={r} /></FloatingPanel>
       <FloatingPanel id="rad"><RadDockCard r={r} /></FloatingPanel>
+      <FloatingPanel id="wx"><WeatherDockCard /></FloatingPanel>
       <FloatingPanel id="location" frameColor="rgba(84,224,255,0.5)"><LocationBeaconCard /></FloatingPanel>
       <FloatingPanel id="comms"><CommsDockCard onOpen={() => useStore.getState().setCommsOpen(!useStore.getState().comms.open)} /></FloatingPanel>
       <FloatingPanel id="minimap"><MiniMap /></FloatingPanel>
@@ -1469,7 +1519,7 @@ function ManualPad() {
       )}
       <div className="grid grid-cols-3 gap-1">
         <span />
-        <PadButton onHold={(d) => (walkInput.fwd = d ? 1 : 0)} title="Walk forward (W)">
+        <PadButton onHold={(d) => (walkInput.fwd = d ? 1 : 0)} title="Traverse forward (W)">
           <ChevronUp className="h-5 w-5" />
         </PadButton>
         <span />
@@ -1486,7 +1536,7 @@ function ManualPad() {
         <PadButton onHold={(d) => (walkInput.strafe = d ? 1 : 0)} title="Sidestep right (D)">
           <ChevronRight className="h-5 w-5" />
         </PadButton>
-        <PadButton onHold={(d) => (walkInput.fwd = d ? -1 : 0)} title="Walk backward (S)">
+        <PadButton onHold={(d) => (walkInput.fwd = d ? -1 : 0)} title="Traverse backward (S)">
           <ChevronDown className="h-5 w-5" />
         </PadButton>
         {roverOn ? (
@@ -1665,7 +1715,7 @@ function ControlsHint() {
   if (gone) return null;
   return (
     <div className="pointer-events-none absolute bottom-[70px] left-1/2 z-[473] -translate-x-1/2">
-      <span className="hud-chip !text-[var(--hud-cyan)]">W A S D walk · SHIFT dash · E collect sample · drag to look</span>
+      <span className="hud-chip !text-[var(--hud-cyan)]">W A S D move · SHIFT dash · E collect sample · drag to look</span>
     </div>
   );
 }
@@ -1694,13 +1744,13 @@ function StandbyHud({ prefs, onPrefs }: { prefs: VisorPrefs; onPrefs: () => void
             <div className="hud-label mt-0.5">{fmtLonLat(site.lon, site.lat)} · {site.region}</div>
           </div>
           <p className="mt-2 text-[11px] leading-relaxed text-[var(--hud-text)]">
-            Real-time 3D surface view — DEM terrain, craters, rocks, sun shadows and the lander rendered from real mission data. Walk hands-free along the traverse or take manual foot control (WASD / on-screen pad, SHIFT to dash), look around freely and grab rock samples in 3D with [E]. Live range, bearing, O₂ and dose telemetry sit in the dock below.
+            Real-time 3D surface view — DEM terrain, craters, rocks, sun shadows and the lander rendered from real mission data. Traverse hands-free along the route or take manual foot control (WASD / on-screen pad, SHIFT to dash), look around freely and grab rock samples in 3D with [E]. Live range, bearing, O₂ and dose telemetry sit in the dock below.
           </p>
           <div className="mt-2 flex flex-wrap justify-center gap-1.5">
             {blocksOn.length > 0 ? blocksOn.map((b) => <span key={b} className="hud-chip !text-[var(--hud-cyan)]">{b}</span>) : <span className="hud-chip">all blocks off — open prefs</span>}
           </div>
           <button className="hud-btn active mt-4 w-full !py-2.5" disabled={!canWalk} onClick={() => useStore.getState().startWalk()}>
-            <Footprints className="h-4 w-4" /> {canWalk ? "begin marswalk" : "plan a route first (≥2 waypoints)"}
+            <Footprints className="h-4 w-4" /> {canWalk ? "begin traverse" : "plan a route first (≥2 waypoints)"}
           </button>
           <div className="mt-2 grid grid-cols-3 gap-1.5">
             <button className="hud-btn !min-h-0 !flex-col !gap-0.5 !py-1.5 text-[8px]" onClick={() => openPanel("locations")} title="Choose a location — named sites, search, coordinates">

@@ -77,9 +77,9 @@ export function TopBar() {
         <Orbit className="h-6 w-6 shrink-0 text-[var(--hud-orange)]" />
         <div className="min-w-0">
           <div className="font-display truncate text-sm font-bold tracking-[0.22em] text-[var(--hud-amber)] hud-glow">
-            ARES-VIS <span className="hidden text-[10px] font-normal tracking-[0.3em] text-[var(--hud-dim)] sm:inline">v2.1</span>
+            REDDOT <span className="hidden text-[10px] font-normal tracking-[0.3em] text-[var(--hud-dim)] sm:inline">v2.1</span>
           </div>
-          <div className="hud-label truncate">Elysium Marswalk Planner · Sol Operations</div>
+          <div className="hud-label truncate">Elysium Traverse Planner · Sol Ops</div>
         </div>
       </div>
 
@@ -161,7 +161,7 @@ export function StatusBar() {
     <footer className="no-print relative z-[520] flex min-h-11 flex-wrap items-center justify-between gap-x-5 gap-y-1 border-t border-[var(--hud-border-dim)] bg-[rgba(5,8,12,0.92)] px-4 py-1.5 text-[11px] backdrop-blur">
       {walking && walk.readout && (
         <span className="text-[var(--hud-cyan)]">
-          <span className="blink">●</span> WALK <b>{walk.readout.atEnd ? "COMPLETE" : "LIVE"}</b>
+          <span className="blink">●</span> TRAVERSE <b>{walk.readout.atEnd ? "COMPLETE" : "LIVE"}</b>
           <span className="ml-2">next <b className="text-[var(--hud-amber)]">{route[Math.min(walk.readout.nextIdx, route.length - 1)]?.name}</b> {fmtDist(walk.readout.nextDistM)}</span>
           <span className="ml-2">O₂ supply <b className={walk.readout.o2Pct <= 20 ? "text-[var(--hud-red)]" : walk.readout.o2Pct <= 50 ? "text-[var(--hud-amber)]" : "text-[var(--hud-green)]"}>{walk.readout.o2Pct.toFixed(0)}%</b></span>
         </span>
