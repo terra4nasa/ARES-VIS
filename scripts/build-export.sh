@@ -24,7 +24,7 @@ for ROUTE in "${ROUTES[@]}"; do
   sed -i 's/export const dynamic = "force-dynamic";/export const dynamic = "force-static";/' "$ROUTE"
 done
 
-NEXT_OUTPUT=export NEXT_BASE_PATH=/ARES-VIS npx next build
+NEXT_OUTPUT=export NEXT_BASE_PATH="${NEXT_BASE_PATH:-/reddot-traverse}" npx next build
 
 # Pages' Jekyll step would ignore _next/ without this marker
 touch out/.nojekyll

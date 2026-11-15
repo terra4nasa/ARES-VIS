@@ -4,7 +4,7 @@
 
 **NASA Space Apps 2026 · Interplanetary Survival Guide: Martian Map**
 
-**🔴 Live app:** **[https://ares-vis.vercel.app](https://ares-vis.vercel.app/)**
+**🔴 Live app:** **[https://reddot-traverse.vercel.app](https://reddot-traverse.vercel.app/)**
 — full 2D planner + 3D visor + NASA live data (APOD, EPIC, NEO watch, space weather).
 
 RedDot Marswalk — named for Singapore's "Little Red Dot" on the Red Planet — fuses decades of robotic Mars-mission data into one hyper-local planning
@@ -96,8 +96,8 @@ echo "NASA_API_KEY=your_key_here" > .env.local   # gitignored, never committed
 ```
 
 ```bash
-git clone https://github.com/terra4nasa/ARES-VIS.git
-cd ARES-VIS
+git clone https://github.com/terra4nasa/reddot-traverse.git
+cd reddot-traverse
 npm install        # or: bun install
 npm run dev        # or: bun run dev
 ```
@@ -218,14 +218,16 @@ GitHub Pages only serves static files, so the deploy uses Next's
 **One-time setup:** repo **Settings → Pages → Build and deployment → Source:
 "GitHub Actions"**.
 
-The included workflow (`.github/workflows/github-pages.yml`) then builds and
-publishes on every push to `main`:
+The workflow that built and published on every push to `main` was removed in the
+rebrand cleanup; the mirror at the URL below was published from that pipeline and
+stays frozen until you re-add a workflow (`.github/workflows/github-pages.yml`)
+or publish a manual export:
 
-- site URL: `https://terra4nasa.github.io/ARES-VIS/`
-- `NEXT_BASE_PATH=/ARES-VIS` is applied automatically so all assets resolve
+- site URL: `https://terra4nasa.github.io/reddot-traverse/`
+- `NEXT_BASE_PATH=/reddot-traverse` matches the repo path so all assets resolve
 
 **What works on Pages** — the full 2D planner, all map layers, the 3D visor,
-manual walking, sample collection and brief export (all client-rendered).
+traverse mode, sample collection and brief export (all client-rendered).
 **Limitation** — there is no server, so `/api/spaceweather` does not exist; the
 app automatically falls back to fetching NOAA SWPC directly from the browser
 (CORS-enabled endpoints), and to bundled default values if that fails too.
@@ -233,7 +235,7 @@ app automatically falls back to fetching NOAA SWPC directly from the browser
 Manual local export (optional):
 
 ```bash
-NEXT_OUTPUT=export NEXT_BASE_PATH=/ARES-VIS npx next build
+NEXT_OUTPUT=export NEXT_BASE_PATH=/reddot-traverse npx next build
 # static site lands in ./out
 ```
 
